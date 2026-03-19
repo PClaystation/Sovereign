@@ -15,6 +15,7 @@ import type {
   DisableStartupItemRequest,
   ExecuteTempCleanupRequest,
   KillProcessRequest,
+  ListActionHistoryRequest,
   OpenProcessLocationRequest,
   RunUtilityActionRequest,
   StartServiceRequest,
@@ -22,7 +23,8 @@ import type {
   RestartServiceRequest
 } from '@shared/ipc';
 import type { DashboardService } from '@main/services/dashboardService';
-import { WatchdogService } from '@main/watchdog/watchdogService';
+import type { ActionHistoryStore } from '@main/store/actionHistoryStore';
+import type { WatchdogService } from '@main/watchdog/watchdogService';
 import { WindowsStartupItemsProvider } from '@main/watchdog/startup/windowsStartupItemsProvider';
 
 import { TempCleanupService } from './tempCleanupService';
@@ -44,11 +46,13 @@ const createResult = (
 });
 
 interface FixerServiceDependencies {
+  actionHistoryStore: ActionHistoryStore;
   dashboardService: DashboardService;
   watchdogService: WatchdogService;
 }
 
 export class FixerService {
+  private readonly listeners = new Set<(result: FixActionResult) => void>();
   private readonly tempCleanupService = new TempCleanupService();
   private readonly startupItemsProvider = new WindowsStartupItemsProvider();
   private readonly servicesProvider = new WindowsServicesProvider();
@@ -58,6 +62,20 @@ export class FixerService {
     private readonly dependencies: FixerServiceDependencies
   ) {}
 
+  subscribe(listener: (result: FixActionResult) => void): () => void {
+    this.listeners.add(listener);
+
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  async listActionHistory(
+    request: ListActionHistoryRequest = {}
+  ): Promise<FixActionResult[]> {
+    return this.dependencies.actionHistoryStore.list(request.limit ?? 8);
+  }
+
   async previewTempCleanup(): Promise<TempCleanupPreview> {
     return this.tempCleanupService.preview();
   }
@@ -65,7 +83,9 @@ export class FixerService {
   async executeTempCleanup(
     request: ExecuteTempCleanupRequest
   ): Promise<FixActionResult> {
-    return this.tempCleanupService.execute(request.previewId, request.entryIds);
+    return this.recordResult(
+      await this.tempCleanupService.execute(request.previewId, request.entryIds)
+    );
   }
 
   async killProcess(request: KillProcessRequest): Promise<FixActionResult> {
@@ -75,23 +95,25 @@ export class FixerService {
     ]);
 
     if (protectedPids.has(request.pid)) {
-      return createResult('kill-process', false, 'Refused to terminate Sovereign', [
-        'The selected PID belongs to the current Sovereign app process tree.'
-      ]);
+      return this.recordResult(
+        createResult('kill-process', false, 'Refused to terminate Sovereign', [
+          'The selected PID belongs to the current Sovereign app process tree.'
+        ])
+      );
     }
 
     try {
       process.kill(request.pid);
       await this.dependencies.dashboardService.refreshNow();
 
-      return createResult(
+      return this.recordResult(
         'kill-process',
         true,
         `Sent a termination signal to ${request.name}`,
         [`PID ${request.pid} was signaled for termination.`, 'Permission or race failures are reported instead of hidden.']
       );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         'kill-process',
         false,
         `Could not terminate ${request.name}`,
@@ -106,23 +128,25 @@ export class FixerService {
     const processInfo: ProcessInfo = request.process;
 
     if (!processInfo.path) {
-      return createResult('open-process-location', false, 'Process path unavailable', [
-        `Sovereign could not determine a file path for PID ${processInfo.pid}.`
-      ]);
+      return this.recordResult(
+        createResult('open-process-location', false, 'Process path unavailable', [
+          `Sovereign could not determine a file path for PID ${processInfo.pid}.`
+        ])
+      );
     }
 
     try {
       await access(processInfo.path);
       shell.showItemInFolder(processInfo.path);
 
-      return createResult(
+      return this.recordResult(
         'open-process-location',
         true,
         `Opened the file location for ${processInfo.name}`,
         [processInfo.path]
       );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         'open-process-location',
         false,
         `Could not open the file location for ${processInfo.name}`,
@@ -144,9 +168,11 @@ export class FixerService {
     request: DisableStartupItemRequest
   ): Promise<FixActionResult> {
     if (process.platform !== 'win32') {
-      return createResult('disable-startup-item', false, 'Startup item control is Windows-only', [
-        'Run Sovereign on Windows 11 to disable startup entries from this panel.'
-      ]);
+      return this.recordResult(
+        createResult('disable-startup-item', false, 'Startup item control is Windows-only', [
+          'Run Sovereign on Windows 11 to disable startup entries from this panel.'
+        ])
+      );
     }
 
     try {
@@ -154,13 +180,15 @@ export class FixerService {
       const startupItem = startupItems.find((item) => item.id === request.startupItemId);
 
       if (!startupItem) {
-        return createResult('disable-startup-item', false, 'Startup item no longer exists', [
-          'Refresh the startup inventory and try again.'
-        ]);
+        return this.recordResult(
+          createResult('disable-startup-item', false, 'Startup item no longer exists', [
+            'Refresh the startup inventory and try again.'
+          ])
+        );
       }
 
       if (!startupItem.canDisable) {
-        return createResult(
+        return this.recordResult(
           'disable-startup-item',
           false,
           `Startup item cannot be disabled: ${startupItem.name}`,
@@ -174,7 +202,7 @@ export class FixerService {
       );
       await this.dependencies.watchdogService.refreshNow();
 
-      return createResult(
+      return this.recordResult(
         'disable-startup-item',
         true,
         `Disabled startup item: ${startupItem.name}`,
@@ -184,7 +212,7 @@ export class FixerService {
         ]
       );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         'disable-startup-item',
         false,
         'Could not disable the selected startup item',
@@ -208,9 +236,11 @@ export class FixerService {
     request: StartServiceRequest
   ): Promise<FixActionResult> {
     if (process.platform !== 'win32') {
-      return createResult('start-service', false, 'Service control is Windows-only', [
-        'Run Sovereign on Windows 11 to start services from this panel.'
-      ]);
+      return this.recordResult(
+        createResult('start-service', false, 'Service control is Windows-only', [
+          'Run Sovereign on Windows 11 to start services from this panel.'
+        ])
+      );
     }
 
     try {
@@ -218,13 +248,15 @@ export class FixerService {
       const service = services.find((item) => item.name === request.serviceName);
 
       if (!service) {
-        return createResult('start-service', false, 'Service no longer exists', [
-          'Refresh the service inventory and try again.'
-        ]);
+        return this.recordResult(
+          createResult('start-service', false, 'Service no longer exists', [
+            'Refresh the service inventory and try again.'
+          ])
+        );
       }
 
       if (!service.canStart) {
-        return createResult(
+        return this.recordResult(
           'start-service',
           false,
           `Service cannot be started: ${service.displayName}`,
@@ -235,14 +267,14 @@ export class FixerService {
       await this.servicesProvider.startService(service.name);
       await this.dependencies.watchdogService.refreshNow();
 
-      return createResult(
+      return this.recordResult(
         'start-service',
         true,
         `Started service: ${service.displayName}`,
         [`Service name: ${service.name}`, 'Windows permission failures are returned directly instead of hidden.']
       );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         'start-service',
         false,
         `Could not start service: ${request.displayName}`,
@@ -255,9 +287,11 @@ export class FixerService {
     request: StopServiceRequest
   ): Promise<FixActionResult> {
     if (process.platform !== 'win32') {
-      return createResult('stop-service', false, 'Service control is Windows-only', [
-        'Run Sovereign on Windows 11 to stop services from this panel.'
-      ]);
+      return this.recordResult(
+        createResult('stop-service', false, 'Service control is Windows-only', [
+          'Run Sovereign on Windows 11 to stop services from this panel.'
+        ])
+      );
     }
 
     try {
@@ -265,13 +299,15 @@ export class FixerService {
       const service = services.find((item) => item.name === request.serviceName);
 
       if (!service) {
-        return createResult('stop-service', false, 'Service no longer exists', [
-          'Refresh the service inventory and try again.'
-        ]);
+        return this.recordResult(
+          createResult('stop-service', false, 'Service no longer exists', [
+            'Refresh the service inventory and try again.'
+          ])
+        );
       }
 
       if (!service.canStop) {
-        return createResult(
+        return this.recordResult(
           'stop-service',
           false,
           `Service cannot be stopped: ${service.displayName}`,
@@ -282,14 +318,14 @@ export class FixerService {
       await this.servicesProvider.stopService(service.name);
       await this.dependencies.watchdogService.refreshNow();
 
-      return createResult(
+      return this.recordResult(
         'stop-service',
         true,
         `Stopped service: ${service.displayName}`,
         [`Service name: ${service.name}`, 'Windows permission failures are returned directly instead of hidden.']
       );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         'stop-service',
         false,
         `Could not stop service: ${request.displayName}`,
@@ -302,9 +338,11 @@ export class FixerService {
     request: RestartServiceRequest
   ): Promise<FixActionResult> {
     if (process.platform !== 'win32') {
-      return createResult('restart-service', false, 'Service control is Windows-only', [
-        'Run Sovereign on Windows 11 to restart services from this panel.'
-      ]);
+      return this.recordResult(
+        createResult('restart-service', false, 'Service control is Windows-only', [
+          'Run Sovereign on Windows 11 to restart services from this panel.'
+        ])
+      );
     }
 
     try {
@@ -312,13 +350,15 @@ export class FixerService {
       const service = services.find((item) => item.name === request.serviceName);
 
       if (!service) {
-        return createResult('restart-service', false, 'Service no longer exists', [
-          'Refresh the service inventory and try again.'
-        ]);
+        return this.recordResult(
+          createResult('restart-service', false, 'Service no longer exists', [
+            'Refresh the service inventory and try again.'
+          ])
+        );
       }
 
       if (!service.canRestart) {
-        return createResult(
+        return this.recordResult(
           'restart-service',
           false,
           `Service cannot be restarted: ${service.displayName}`,
@@ -332,14 +372,14 @@ export class FixerService {
       await this.servicesProvider.restartService(service.name);
       await this.dependencies.watchdogService.refreshNow();
 
-      return createResult(
+      return this.recordResult(
         'restart-service',
         true,
         `Restarted service: ${service.displayName}`,
         [`Service name: ${service.name}`, 'If Windows required elevation and denied it, that failure would have been returned here instead.']
       );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         'restart-service',
         false,
         `Could not restart service: ${request.displayName}`,
@@ -352,9 +392,11 @@ export class FixerService {
     request: RunUtilityActionRequest
   ): Promise<FixActionResult> {
     if (process.platform !== 'win32') {
-      return createResult(request.action, false, 'This utility is Windows-only', [
-        'Run Sovereign on Windows 11 to use this repair action.'
-      ]);
+      return this.recordResult(
+        createResult(request.action, false, 'This utility is Windows-only', [
+          'Run Sovereign on Windows 11 to use this repair action.'
+        ])
+      );
     }
 
     const summaries: Record<RunUtilityActionRequest['action'], string> = {
@@ -382,9 +424,11 @@ export class FixerService {
         this.dependencies.watchdogService.refreshNow()
       ]);
 
-      return createResult(request.action, true, summaries[request.action], details[request.action]);
+      return this.recordResult(
+        createResult(request.action, true, summaries[request.action], details[request.action])
+      );
     } catch (error) {
-      return createResult(
+      return this.recordResult(
         request.action,
         false,
         `Could not complete ${request.action}`,
@@ -419,11 +463,34 @@ export class FixerService {
       );
     }
 
-    return createResult(
-      'refresh-diagnostics',
-      success,
-      success ? 'Diagnostics refreshed' : 'Diagnostics refresh completed with errors',
-      details
+    return this.recordResult(
+      createResult(
+        'refresh-diagnostics',
+        success,
+        success ? 'Diagnostics refreshed' : 'Diagnostics refresh completed with errors',
+        details
+      )
     );
+  }
+
+  private async recordResult(
+    resultOrKind: FixActionResult | FixActionResult['kind'],
+    success?: boolean,
+    summary?: string,
+    details?: string[]
+  ): Promise<FixActionResult> {
+    const result =
+      typeof resultOrKind === 'string'
+        ? createResult(resultOrKind, Boolean(success), summary || '', details || [])
+        : resultOrKind;
+
+    try {
+      await this.dependencies.actionHistoryStore.append(result);
+    } catch (error) {
+      console.warn('[fixer] failed to record action history entry', error);
+    }
+
+    this.listeners.forEach((listener) => listener(result));
+    return result;
   }
 }

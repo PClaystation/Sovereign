@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import { appendFileSync, mkdirSync } from 'node:fs';
 
@@ -8,6 +9,7 @@ import { FixerService } from '@main/fixer/fixerService';
 import { createSystemProbe } from '@main/platform/createSystemProbe';
 import { registerIpcHandlers } from '@main/ipc/registerIpc';
 import { DashboardService } from '@main/services/dashboardService';
+import { JsonActionHistoryStore } from '@main/store/jsonActionHistoryStore';
 import { JsonEventStore } from '@main/store/jsonEventStore';
 import { JsonSettingsStore } from '@main/store/jsonSettingsStore';
 import { WatchdogService } from '@main/watchdog/watchdogService';
@@ -26,7 +28,7 @@ let watchdogService: WatchdogService | null = null;
 let isQuitting = false;
 let watchdogStartupTimer: NodeJS.Timeout | null = null;
 
-const STARTUP_LOG_DIRECTORY = path.join(process.env.SystemDrive || 'C:', 'temp');
+const STARTUP_LOG_DIRECTORY = path.join(os.tmpdir(), 'sovereign');
 const STARTUP_LOG_PATH = path.join(STARTUP_LOG_DIRECTORY, 'sovereign-startup.log');
 
 const logStartup = (message: string, error?: unknown): void => {
@@ -122,9 +124,13 @@ const createMainWindow = async (): Promise<void> => {
 
 const initializeServices = async (): Promise<void> => {
   logStartup('initializeServices:start');
+  const actionHistoryStore = new JsonActionHistoryStore(
+    path.join(app.getPath('userData'), 'action-history.json')
+  );
   const eventStore = new JsonEventStore(path.join(app.getPath('userData'), 'events.json'));
   const settingsStore = new JsonSettingsStore(path.join(app.getPath('userData'), 'settings.json'));
 
+  await actionHistoryStore.initialize();
   await settingsStore.initialize();
   await eventStore.initialize();
 
@@ -136,6 +142,7 @@ const initializeServices = async (): Promise<void> => {
 
   watchdogService = new WatchdogService(eventStore, settingsStore.getSettings());
   const fixerService = new FixerService({
+    actionHistoryStore,
     dashboardService,
     watchdogService
   });
@@ -159,6 +166,14 @@ const initializeServices = async (): Promise<void> => {
 
   watchdogService.subscribe((events) => {
     broadcastDashboardUpdate(IPC_CHANNELS.events.updated, events);
+  });
+
+  watchdogService.subscribeStatuses((statuses) => {
+    broadcastDashboardUpdate(IPC_CHANNELS.watchdog.statusesUpdated, statuses);
+  });
+
+  fixerService.subscribe((result) => {
+    broadcastDashboardUpdate(IPC_CHANNELS.fixer.historyUpdated, result);
   });
 
   try {
@@ -223,15 +238,25 @@ const bootstrap = async (): Promise<void> => {
   }
 };
 
-app.whenReady().then(() => {
-  logStartup('app:ready');
-  void app.setAppUserModelId('com.continental.sovereign');
-  void bootstrap();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-  app.on('activate', () => {
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
     void createMainWindow();
   });
-});
+
+  app.whenReady().then(() => {
+    logStartup('app:ready');
+    void app.setAppUserModelId('com.continental.sovereign');
+    void bootstrap();
+
+    app.on('activate', () => {
+      void createMainWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

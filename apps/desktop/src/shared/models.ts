@@ -1,6 +1,7 @@
 export type MetricStatus = 'healthy' | 'elevated' | 'stressed';
 export type WatchdogSeverity = 'info' | 'unusual' | 'suspicious';
 export type PlatformKey = 'windows' | 'macos' | 'linux' | 'unknown';
+export type WatchdogMonitorState = 'idle' | 'active' | 'degraded' | 'unsupported';
 export type WatchdogSourceId =
   | 'watchdog'
   | 'process-launch'
@@ -96,6 +97,17 @@ export interface ProcessInfo {
   user: string | null;
 }
 
+export interface SystemIdentity {
+  deviceName: string;
+  osName: string;
+  osVersion: string;
+  kernelVersion: string;
+  architecture: string;
+  cpuModel: string;
+  totalMemoryBytes: number;
+  bootedAt: string | null;
+}
+
 export interface SystemHealthSummary {
   status: MetricStatus;
   headline: string;
@@ -131,6 +143,7 @@ export interface MetricsHistoryPoint {
 export interface SystemMetricsSnapshot {
   collectedAt: string;
   platform: PlatformKey;
+  identity: SystemIdentity;
   cpu: CpuMetrics;
   memory: MemoryMetrics;
   disk: DiskMetrics;
@@ -166,6 +179,7 @@ export interface WatchdogEventQuery {
   severities?: WatchdogSeverity[];
   categories?: WatchdogCategory[];
   sources?: WatchdogSourceId[];
+  searchText?: string;
 }
 
 export interface StartupItem {
@@ -261,6 +275,22 @@ export interface WatchdogMonitorSettings {
   startupMonitoring: boolean;
   scheduledTaskMonitoring: boolean;
   securityStatusMonitoring: boolean;
+}
+
+export type WatchdogMonitorId = keyof WatchdogMonitorSettings;
+
+export interface WatchdogMonitorRuntime {
+  id: WatchdogMonitorId;
+  title: string;
+  description: string;
+  enabled: boolean;
+  supported: boolean;
+  state: WatchdogMonitorState;
+  lastCheckedAt: string | null;
+  lastEventAt: string | null;
+  lastError: string | null;
+  eventCount: number;
+  pollingIntervalMs: number;
 }
 
 export interface AppSettings {

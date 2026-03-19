@@ -69,6 +69,25 @@ const applyQuery = (
     );
   }
 
+  if (query.searchText?.trim()) {
+    const searchText = query.searchText.trim().toLowerCase();
+
+    filteredEvents = filteredEvents.filter((event) =>
+      [
+        event.title,
+        event.description,
+        event.recommendedAction,
+        event.source,
+        event.category,
+        event.severity,
+        ...event.evidence
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(searchText)
+    );
+  }
+
   return filteredEvents.slice(0, query.limit ?? 8);
 };
 

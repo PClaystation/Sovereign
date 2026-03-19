@@ -10,26 +10,33 @@ import type {
   TempCleanupPreview,
   WatchdogCategory,
   WatchdogEvent,
-  WatchdogSeverity
+  WatchdogMonitorRuntime,
+  WatchdogSeverity,
+  WatchdogSourceId
 } from '@shared/models';
 import { DEFAULT_APP_SETTINGS } from '@shared/models';
 
+import { ActionHistoryPanel } from './components/ActionHistoryPanel';
 import { ActionToasts, type ActionToastItem } from './components/ActionToasts';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { EventDetailPanel } from './components/EventDetailPanel';
 import { EventFilters } from './components/EventFilters';
 import { EventTimeline } from './components/EventTimeline';
 import { MetricCard } from './components/MetricCard';
+import { PostureOverviewPanel } from './components/PostureOverviewPanel';
 import { ProcessDetailPanel } from './components/ProcessDetailPanel';
 import { ProcessesTable } from './components/ProcessesTable';
 import { QuickActionsPanel } from './components/QuickActionsPanel';
 import { ServicesPanel } from './components/ServicesPanel';
 import { SettingsView } from './components/SettingsView';
 import { StartupItemsPanel } from './components/StartupItemsPanel';
+import { SystemIdentityPanel } from './components/SystemIdentityPanel';
 import { SystemStatisticsPanel } from './components/SystemStatisticsPanel';
 import { TelemetryTrendsPanel } from './components/TelemetryTrendsPanel';
 import { TempCleanupPanel } from './components/TempCleanupPanel';
+import { WatchdogCoveragePanel } from './components/WatchdogCoveragePanel';
 import { WorkloadInsightsPanel } from './components/WorkloadInsightsPanel';
+import { derivePostureInsight } from './utils/controlCenter';
 import {
   formatBytes,
   formatClock,
@@ -46,10 +53,12 @@ type QuickActionId = 'refresh-diagnostics' | 'preview-temp-cleanup' | UtilityAct
 
 type LoadingState = {
   snapshot: boolean;
+  monitorStatuses: boolean;
   events: boolean;
   startupItems: boolean;
   services: boolean;
   settings: boolean;
+  actionHistory: boolean;
   tempPreview: boolean;
 };
 
@@ -174,10 +183,12 @@ const EMPTY_ACTIONS = ['Connecting to the first live telemetry sample.'];
 
 const createLoadingState = (): LoadingState => ({
   snapshot: true,
+  monitorStatuses: true,
   events: true,
   startupItems: false,
   services: false,
   settings: true,
+  actionHistory: true,
   tempPreview: false
 });
 
@@ -196,7 +207,9 @@ const getErrorMessage = (cause: unknown, fallbackMessage: string): string =>
 export const App = () => {
   const [activeView, setActiveView] = useState<AppView>('dashboard');
   const [snapshot, setSnapshot] = useState<SystemMetricsSnapshot | null>(null);
+  const [monitorStatuses, setMonitorStatuses] = useState<WatchdogMonitorRuntime[]>([]);
   const [events, setEvents] = useState<WatchdogEvent[]>([]);
+  const [actionHistory, setActionHistory] = useState<FixActionResult[]>([]);
   const [startupItems, setStartupItems] = useState<StartupItem[]>([]);
   const [services, setServices] = useState<ServiceSummary[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -208,6 +221,8 @@ export const App = () => {
   const [loading, setLoading] = useState<LoadingState>(createLoadingState);
   const [severityFilter, setSeverityFilter] = useState<'all' | WatchdogSeverity>('all');
   const [categoryFilter, setCategoryFilter] = useState<'all' | WatchdogCategory>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | WatchdogSourceId>('all');
+  const [eventSearch, setEventSearch] = useState('');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedProcessPid, setSelectedProcessPid] = useState<number | null>(null);
   const [processSearch, setProcessSearch] = useState('');
@@ -256,6 +271,30 @@ export const App = () => {
     });
   };
 
+  const applyMonitorStatuses = (nextStatuses: WatchdogMonitorRuntime[]): void => {
+    startTransition(() => {
+      setMonitorStatuses(nextStatuses);
+    });
+  };
+
+  const applyActionHistory = (nextHistory: FixActionResult[]): void => {
+    startTransition(() => {
+      setActionHistory(nextHistory);
+    });
+  };
+
+  const appendActionHistoryResult = (result: FixActionResult): void => {
+    startTransition(() => {
+      setActionHistory((currentHistory) => {
+        const dedupedHistory = currentHistory.filter(
+          (historyItem) => historyItem.actionId !== result.actionId
+        );
+
+        return [result, ...dedupedHistory].slice(0, 8);
+      });
+    });
+  };
+
   const loadSnapshot = async (): Promise<void> => {
     setLoadingState('snapshot', true);
 
@@ -268,6 +307,18 @@ export const App = () => {
     }
   };
 
+  const loadMonitorStatuses = async (): Promise<void> => {
+    setLoadingState('monitorStatuses', true);
+
+    try {
+      applyMonitorStatuses(await window.sovereign.getWatchdogMonitorStatuses());
+    } catch (cause) {
+      setError(getErrorMessage(cause, 'Unable to read watchdog monitor status.'));
+    } finally {
+      setLoadingState('monitorStatuses', false);
+    }
+  };
+
   const loadEvents = async (): Promise<void> => {
     setLoadingState('events', true);
 
@@ -276,7 +327,9 @@ export const App = () => {
         await window.sovereign.listRecentEvents({
           limit: settings?.timelineEventLimit ?? DEFAULT_APP_SETTINGS.timelineEventLimit,
           severities: severityFilter === 'all' ? undefined : [severityFilter],
-          categories: categoryFilter === 'all' ? undefined : [categoryFilter]
+          categories: categoryFilter === 'all' ? undefined : [categoryFilter],
+          sources: sourceFilter === 'all' ? undefined : [sourceFilter],
+          searchText: eventSearch.trim() || undefined
         })
       );
     } catch (cause) {
@@ -318,6 +371,18 @@ export const App = () => {
     }
   };
 
+  const loadActionHistory = async (): Promise<void> => {
+    setLoadingState('actionHistory', true);
+
+    try {
+      applyActionHistory(await window.sovereign.listActionHistory({ limit: 8 }));
+    } catch (cause) {
+      setError(getErrorMessage(cause, 'Unable to load recent fixer results.'));
+    } finally {
+      setLoadingState('actionHistory', false);
+    }
+  };
+
   const loadSettings = async (): Promise<void> => {
     setLoadingState('settings', true);
 
@@ -337,6 +402,7 @@ export const App = () => {
   const pushToast = (result: FixActionResult): void => {
     const toast: ActionToastItem = { id: result.actionId, result };
     setToasts((currentToasts) => [toast, ...currentToasts].slice(0, 4));
+    appendActionHistoryResult(result);
     window.setTimeout(() => dismissToast(toast.id), 6_000);
   };
 
@@ -344,7 +410,12 @@ export const App = () => {
     let isMounted = true;
 
     const initialize = async (): Promise<void> => {
-      await Promise.allSettled([loadSettings(), loadSnapshot()]);
+      await Promise.allSettled([
+        loadSettings(),
+        loadSnapshot(),
+        loadMonitorStatuses(),
+        loadActionHistory()
+      ]);
     };
 
     void initialize();
@@ -361,10 +432,26 @@ export const App = () => {
       }
     });
 
+    const unsubscribeMonitorStatuses = window.sovereign.onWatchdogMonitorStatusesUpdated(
+      (nextStatuses) => {
+        if (isMounted) {
+          applyMonitorStatuses(nextStatuses);
+        }
+      }
+    );
+
+    const unsubscribeActionHistory = window.sovereign.onFixerHistoryUpdated((result) => {
+      if (isMounted) {
+        appendActionHistoryResult(result);
+      }
+    });
+
     return () => {
       isMounted = false;
       unsubscribeDashboard();
       unsubscribeSettings();
+      unsubscribeMonitorStatuses();
+      unsubscribeActionHistory();
     };
   }, []);
 
@@ -387,7 +474,28 @@ export const App = () => {
       isMounted = false;
       unsubscribe();
     };
-  }, [severityFilter, categoryFilter, settings?.timelineEventLimit]);
+  }, [severityFilter, categoryFilter, sourceFilter, eventSearch, settings?.timelineEventLimit]);
+
+  useEffect(() => {
+    const preferredTheme =
+      settingsDraft?.theme ?? settings?.theme ?? DEFAULT_APP_SETTINGS.theme;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+
+    const applyTheme = (): void => {
+      const resolvedTheme =
+        preferredTheme === 'system' ? (mediaQuery.matches ? 'light' : 'dark') : preferredTheme;
+
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.dataset.themePreference = preferredTheme;
+    };
+
+    applyTheme();
+    mediaQuery.addEventListener('change', applyTheme);
+
+    return () => {
+      mediaQuery.removeEventListener('change', applyTheme);
+    };
+  }, [settings?.theme, settingsDraft?.theme]);
 
   useEffect(() => {
     if (activeView !== 'actions') {
@@ -605,22 +713,29 @@ export const App = () => {
     )
     .slice(0, 10);
 
+  const postureInsight = derivePostureInsight(
+    snapshot,
+    events,
+    monitorStatuses,
+    actionHistory
+  );
   const showTelemetrySummaries =
     settings?.enableTelemetrySummaries ?? DEFAULT_APP_SETTINGS.enableTelemetrySummaries;
-  const healthStatus = snapshot?.health.status ?? 'healthy';
+  const healthStatus = postureInsight?.status ?? snapshot?.health.status ?? 'healthy';
   const healthHeadline = showTelemetrySummaries
-    ? snapshot?.health.headline || 'Connecting telemetry'
+    ? postureInsight?.headline || snapshot?.health.headline || 'Connecting telemetry'
     : snapshot
       ? 'Live telemetry connected'
       : 'Connecting telemetry';
   const healthSummary = showTelemetrySummaries
-    ? snapshot?.health.summary ||
+    ? postureInsight?.summary ||
+      snapshot?.health.summary ||
       'The dashboard will populate once the main process completes its first telemetry sample.'
     : snapshot
       ? 'Live metrics and watchdog polling remain active. Narrative guidance is currently hidden in settings.'
       : 'Connecting to live metrics and local dashboard services.';
   const healthActions = showTelemetrySummaries
-    ? snapshot?.health.actions ?? EMPTY_ACTIONS
+    ? postureInsight?.recommendedActions ?? snapshot?.health.actions ?? EMPTY_ACTIONS
     : ['Narrative metric guidance is hidden in Settings.'];
   const networkGaugeMax =
     settings?.thresholds.network.stressedBytesPerSec ??
@@ -639,6 +754,10 @@ export const App = () => {
   const enabledMonitorCount = settings ? Object.values(settings.monitors).filter(Boolean).length : 0;
   const hasUnsavedSettings = serializeSettings(settingsDraft) !== serializeSettings(settings);
   const actionsDisabled = Boolean(busyActionKey) || isSavingSettings;
+  const degradedMonitorCount = monitorStatuses.filter(
+    (status) => status.state === 'degraded'
+  ).length;
+  const failedActionCount = actionHistory.filter((result) => !result.success).length;
   const cpuDetailParts = snapshot
     ? [
         `${snapshot.cpu.coreCount} logical cores`,
@@ -690,8 +809,13 @@ export const App = () => {
           },
           {
             label: 'Watchdog coverage',
-            value: settings ? `${enabledMonitorCount}/4 feeds` : 'Loading',
-            detail: snapshot ? PLATFORM_LABELS[snapshot.platform] : 'Determining the platform profile'
+            value: settings ? `${enabledMonitorCount}/${monitorStatuses.length || 4} feeds` : 'Loading',
+            detail:
+              degradedMonitorCount > 0
+                ? `${degradedMonitorCount} degraded feed${degradedMonitorCount === 1 ? '' : 's'}`
+                : snapshot
+                  ? PLATFORM_LABELS[snapshot.platform]
+                  : 'Determining the platform profile'
           }
         ]
       : activeView === 'investigate'
@@ -719,9 +843,12 @@ export const App = () => {
         : activeView === 'actions'
           ? [
               {
-                label: 'Temp preview',
-                value: tempPreview ? `${tempPreview.itemCount} items` : 'Not generated',
-                detail: tempPreview ? `${formatBytes(tempPreview.totalBytes)} reclaimable` : 'Build a preview before cleanup'
+                label: 'Recent actions',
+                value: formatCount(actionHistory.length),
+                detail:
+                  failedActionCount > 0
+                    ? `${failedActionCount} recent failure${failedActionCount === 1 ? '' : 's'}`
+                    : 'Persisted operator action log is current'
               },
               {
                 label: 'Startup inventory',
@@ -736,9 +863,9 @@ export const App = () => {
             ]
           : [
               {
-                label: 'Monitors enabled',
-                value: settings ? `${enabledMonitorCount}/4` : 'Loading',
-                detail: 'These toggles only affect in-app polling'
+                label: 'Theme and interval',
+                value: settings ? `${settings.theme} · ${settings.metricsRefreshIntervalMs / 1000}s` : 'Loading',
+                detail: 'Saved theme preference and live polling interval'
               },
               {
                 label: 'Timeline limit',
@@ -756,6 +883,31 @@ export const App = () => {
 
   const renderDashboard = () => (
     <>
+      {postureInsight ? (
+        <section className="dashboard-overview-grid">
+          <PostureOverviewPanel
+            score={postureInsight.score}
+            status={postureInsight.status}
+            headline={postureInsight.headline}
+            summary={postureInsight.summary}
+            dominantPressure={postureInsight.dominantPressure}
+            readiness={postureInsight.readiness}
+            coverage={postureInsight.coverage}
+            highlights={postureInsight.highlights}
+            recommendedActions={postureInsight.recommendedActions}
+          />
+          <SystemIdentityPanel
+            snapshot={snapshot}
+            platformLabel={snapshot ? PLATFORM_LABELS[snapshot.platform] : PLATFORM_LABELS.unknown}
+          />
+        </section>
+      ) : (
+        <SystemIdentityPanel
+          snapshot={snapshot}
+          platformLabel={snapshot ? PLATFORM_LABELS[snapshot.platform] : PLATFORM_LABELS.unknown}
+        />
+      )}
+
       <section className="metrics-grid">
         <MetricCard
           title="CPU"
@@ -797,7 +949,20 @@ export const App = () => {
 
       <section className="analytics-grid">
         <TelemetryTrendsPanel history={snapshot?.history ?? []} snapshot={snapshot} />
+        <WatchdogCoveragePanel
+          statuses={monitorStatuses}
+          isLoading={loading.monitorStatuses}
+        />
+      </section>
+
+      <section className="analytics-grid">
         <SystemStatisticsPanel snapshot={snapshot} events={events} />
+        <ActionHistoryPanel
+          history={actionHistory}
+          isLoading={loading.actionHistory}
+          title="Recent operator log"
+          description="Recent repair actions are persisted so you can correlate changes with the current machine state."
+        />
       </section>
 
       <WorkloadInsightsPanel snapshot={snapshot} />
@@ -856,8 +1021,12 @@ export const App = () => {
           <EventFilters
             severityFilter={severityFilter}
             categoryFilter={categoryFilter}
+            sourceFilter={sourceFilter}
+            searchValue={eventSearch}
             onSeverityChange={setSeverityFilter}
             onCategoryChange={setCategoryFilter}
+            onSourceChange={setSourceFilter}
+            onSearchChange={setEventSearch}
           />
           <EventTimeline
             events={events}
@@ -874,12 +1043,20 @@ export const App = () => {
 
   const renderActions = () => (
     <div className="actions-stack">
-      <QuickActionsPanel
-        actions={QUICK_ACTIONS}
-        disabled={actionsDisabled}
-        busyActionId={busyActionKey && QUICK_ACTIONS.some((action) => action.id === busyActionKey) ? (busyActionKey as QuickActionId) : null}
-        onRun={(actionId) => { void handleQuickAction(actionId); }}
-      />
+      <section className="actions-overview-grid">
+        <QuickActionsPanel
+          actions={QUICK_ACTIONS}
+          disabled={actionsDisabled}
+          busyActionId={busyActionKey && QUICK_ACTIONS.some((action) => action.id === busyActionKey) ? (busyActionKey as QuickActionId) : null}
+          onRun={(actionId) => { void handleQuickAction(actionId); }}
+        />
+        <ActionHistoryPanel
+          history={actionHistory}
+          isLoading={loading.actionHistory}
+          title="Action audit trail"
+          description="Recent operator changes stay visible here so you can compare repairs against the live system state."
+        />
+      </section>
 
       <section className="fixer-grid">
         <TempCleanupPanel

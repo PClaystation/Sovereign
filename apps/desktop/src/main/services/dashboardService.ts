@@ -1,4 +1,4 @@
-import type { MetricsHistoryPoint, SystemMetricsSnapshot } from '@shared/models';
+import type { AppSettings, MetricsHistoryPoint, SystemMetricsSnapshot } from '@shared/models';
 import type { SystemProbe } from '@main/platform/systemProbe';
 import type { SettingsStore } from '@main/store/settingsStore';
 
@@ -12,12 +12,15 @@ export class DashboardService {
   private readonly listeners = new Set<SnapshotListener>();
   private metricsHistory: MetricsHistoryPoint[] = [];
   private refreshInFlight: Promise<SystemMetricsSnapshot> | null = null;
+  private refreshIntervalMs: number;
 
   constructor(
     private readonly probe: SystemProbe,
     private readonly settingsStore: SettingsStore,
-    private readonly refreshIntervalMs: number
-  ) {}
+    refreshIntervalMs: number
+  ) {
+    this.refreshIntervalMs = refreshIntervalMs;
+  }
 
   async initialize(): Promise<void> {
     const snapshot = await this.collectSnapshotOnce();
@@ -57,6 +60,19 @@ export class DashboardService {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  updateSettings(settings: AppSettings): void {
+    if (settings.metricsRefreshIntervalMs === this.refreshIntervalMs) {
+      return;
+    }
+
+    this.refreshIntervalMs = settings.metricsRefreshIntervalMs;
+
+    if (this.refreshTimer) {
+      this.stop();
+      this.start();
+    }
   }
 
   async refreshNow(): Promise<void> {

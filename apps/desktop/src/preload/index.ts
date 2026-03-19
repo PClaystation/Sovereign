@@ -5,6 +5,7 @@ import type {
   DisableStartupItemRequest,
   ExecuteTempCleanupRequest,
   KillProcessRequest,
+  ListActionHistoryRequest,
   OpenProcessLocationRequest,
   RunUtilityActionRequest,
   StartServiceRequest,
@@ -20,12 +21,17 @@ import type {
   SystemMetricsSnapshot,
   TempCleanupPreview,
   WatchdogEvent,
-  WatchdogEventQuery
+  WatchdogEventQuery,
+  WatchdogMonitorRuntime
 } from '@shared/models';
 
 const api: DesktopApi = {
   getDashboardSnapshot: () =>
     ipcRenderer.invoke(IPC_CHANNELS.dashboard.getSnapshot) as Promise<SystemMetricsSnapshot>,
+  getWatchdogMonitorStatuses: () =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.watchdog.getMonitorStatuses
+    ) as Promise<WatchdogMonitorRuntime[]>,
   listRecentEvents: (query?: WatchdogEventQuery) =>
     ipcRenderer.invoke(IPC_CHANNELS.events.list, query) as Promise<WatchdogEvent[]>,
   getSettings: () =>
@@ -72,6 +78,11 @@ const api: DesktopApi = {
       IPC_CHANNELS.fixer.restartService,
       request
     ) as Promise<FixActionResult>,
+  listActionHistory: (request?: ListActionHistoryRequest) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.fixer.listActionHistory,
+      request
+    ) as Promise<FixActionResult[]>,
   runUtilityAction: (request: RunUtilityActionRequest) =>
     ipcRenderer.invoke(
       IPC_CHANNELS.fixer.runUtilityAction,
@@ -91,6 +102,20 @@ const api: DesktopApi = {
 
     return () => {
       ipcRenderer.off(IPC_CHANNELS.dashboard.updated, subscription);
+    };
+  },
+  onWatchdogMonitorStatusesUpdated: (listener) => {
+    const subscription = (
+      _event: IpcRendererEvent,
+      statuses: WatchdogMonitorRuntime[]
+    ): void => {
+      listener(statuses);
+    };
+
+    ipcRenderer.on(IPC_CHANNELS.watchdog.statusesUpdated, subscription);
+
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.watchdog.statusesUpdated, subscription);
     };
   },
   onEventsUpdated: (listener) => {
@@ -116,6 +141,17 @@ const api: DesktopApi = {
 
     return () => {
       ipcRenderer.off(IPC_CHANNELS.settings.updated, subscription);
+    };
+  },
+  onFixerHistoryUpdated: (listener) => {
+    const subscription = (_event: IpcRendererEvent, result: FixActionResult): void => {
+      listener(result);
+    };
+
+    ipcRenderer.on(IPC_CHANNELS.fixer.historyUpdated, subscription);
+
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.fixer.historyUpdated, subscription);
     };
   }
 };

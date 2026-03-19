@@ -16,21 +16,29 @@ The current app includes:
 
 - a modern dashboard shell built for Windows 11-style desktop use
 - live CPU, memory, disk, and network summary cards
+- a synthesized posture overview with a score, dominant pressure summary, and recommended next steps
+- a system profile panel for device, OS, kernel, CPU, memory, and last-boot context
 - rolling trend graphs for CPU, memory, network throughput, and disk activity
 - denser runtime statistics including uptime, session count, process census, per-core load, swap, and disk I/O
 - workload breakdown visuals for the busiest CPU cores and top CPU/memory processes
 - a top processes table fed from the main-process telemetry service
+- process-path badges in the triage table for temp, Downloads, and AppData-style launches
 - process launch monitoring with explainable path heuristics for temp, Downloads, and AppData-style locations
 - startup item inventory and change detection on Windows
 - scheduled task summaries and change detection on Windows when readable
 - Defender and firewall status reads on Windows when readable
+- a watchdog coverage panel that surfaces active, degraded, disabled, and unsupported monitor states
 - a filterable recent-events timeline and event detail panel with evidence and recommended action
+- event timeline search plus source-based filtering in addition to severity/category filters
 - a settings view for severity thresholds, monitor toggles, timeline limits, and telemetry-summary preferences
+- theme preference controls for dark, light, or system rendering
+- a live refresh-interval control that actually reconfigures dashboard polling after save
 - safe temp cleanup with preview-first execution
 - explicit process actions for opening file locations and ending processes
 - explicit Windows service restart controls
 - explicit startup item disable controls
 - a manual diagnostics refresh that re-polls both telemetry and watchdog providers
+- a persisted action history log for repair and control actions, surfaced both in the dashboard and the actions workspace
 - a persisted local event store abstraction for watchdog history
 - a persisted local settings store that updates dashboard thresholds and watchdog monitor coverage
 - strongly typed IPC contracts shared between Electron main and renderer
@@ -111,21 +119,22 @@ This runs the production build and asks `electron-builder` to generate a Windows
 
 - `src/main/index.ts` boots the Electron window and background services.
 - `src/main/fixer` contains user-invoked fixer actions and temp cleanup preview logic.
+- `src/main/fixer` now also persists and broadcasts recent fixer results for the renderer action log.
 - `src/main/platform` contains platform adapters for system telemetry collection.
-- `src/main/services/dashboardService.ts` refreshes live snapshots on a timer, maintains a short rolling sample history for graphs, and applies settings-backed thresholds to health summaries.
+- `src/main/services/dashboardService.ts` refreshes live snapshots on a timer, maintains a short rolling sample history for graphs, applies settings-backed thresholds to health summaries, and now reconfigures its timer when the saved refresh interval changes.
 - `src/main/store` contains the local event/settings store abstractions and JSON-backed implementations.
-- `src/main/watchdog` contains explainable monitors and Windows command providers for watchdog reads.
+- `src/main/watchdog` contains explainable monitors and Windows command providers for watchdog reads, plus runtime coverage state for each feed.
 - `src/main/ipc/registerIpc.ts` wires typed IPC handlers to services.
 
 ### Shared contracts
 
-- `src/shared/models.ts` defines the core data models for metrics, rolling telemetry history, processes, events, services, startup items, settings, and fix-action results.
+- `src/shared/models.ts` defines the core data models for metrics, rolling telemetry history, machine identity, processes, events, services, startup items, settings, monitor runtime state, and fix-action results.
 - `src/shared/ipc.ts` centralizes IPC channel names and request/response types.
 
 ### Renderer
 
 - `src/renderer/src/App.tsx` owns the navigation shell, live state subscriptions, and view orchestration.
-- `src/renderer/src/components` renders the summary cards, process/event details, settings controls, fixer panels, confirmations, and result toasts.
+- `src/renderer/src/components` renders the summary cards, posture/system profile panels, process/event details, settings controls, fixer panels, coverage panels, confirmations, and result toasts.
 - `src/renderer/src/utils/formatters.ts` keeps display formatting out of the components.
 
 ## Local persistence
@@ -142,5 +151,6 @@ The current build uses JSON-backed event and settings stores in the Electron mai
 - Severity is heuristic, not authoritative. Temp, Downloads, and AppData path matches are intentionally explainable signals, not proof of malicious behavior.
 - Temp cleanup only targets previewed top-level items in the current user temp root and skips newer files by design.
 - Process termination, service restart, and startup disable can still fail because of Windows permissions or active file/service locks; those failures are returned directly to the UI.
+- Monitor runtime status reflects what Sovereign itself could initialize or refresh during the current app session. It is not an independent guarantee that every Windows source is healthy outside the app.
 - Re-enable flows for disabled startup items are not exposed in the UI yet, even though Sovereign records local backup metadata where possible.
 - The current settings page controls thresholds and monitor toggles, but it does not yet expose re-enable flows, scheduled-task tuning, or Windows-specific exclusion lists.

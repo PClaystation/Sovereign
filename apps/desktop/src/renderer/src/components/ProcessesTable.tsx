@@ -20,6 +20,28 @@ interface ProcessesTableProps {
   onKillProcess: (process: ProcessInfo) => void;
 }
 
+const getPathFlag = (process: ProcessInfo): string | null => {
+  const candidate = process.path?.toLowerCase() || '';
+
+  if (!candidate) {
+    return null;
+  }
+
+  if (candidate.includes('/appdata/local/temp/') || candidate.includes('\\appdata\\local\\temp\\')) {
+    return 'Temp path';
+  }
+
+  if (candidate.includes('/downloads/') || candidate.includes('\\downloads\\')) {
+    return 'Downloads';
+  }
+
+  if (candidate.includes('/appdata/') || candidate.includes('\\appdata\\')) {
+    return 'AppData';
+  }
+
+  return null;
+};
+
 export const ProcessesTable = ({
   processes,
   selectedProcessPid,
@@ -105,7 +127,12 @@ export const ProcessesTable = ({
               >
                 <td>
                   <div className="process-name">
-                    <span>{process.name}</span>
+                    <span className="process-title-row">
+                      <span>{process.name}</span>
+                      {getPathFlag(process) ? (
+                        <span className="table-badge">{getPathFlag(process)}</span>
+                      ) : null}
+                    </span>
                     <span className="process-path">{process.path || 'Path unavailable'}</span>
                   </div>
                 </td>

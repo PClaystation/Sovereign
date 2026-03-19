@@ -7,13 +7,18 @@ import type {
   SystemMetricsSnapshot,
   TempCleanupPreview,
   WatchdogEvent,
-  WatchdogEventQuery
+  WatchdogEventQuery,
+  WatchdogMonitorRuntime
 } from './models';
 
 export const IPC_CHANNELS = {
   dashboard: {
     getSnapshot: 'dashboard:getSnapshot',
     updated: 'dashboard:updated'
+  },
+  watchdog: {
+    getMonitorStatuses: 'watchdog:getMonitorStatuses',
+    statusesUpdated: 'watchdog:statusesUpdated'
   },
   events: {
     list: 'events:list',
@@ -35,6 +40,8 @@ export const IPC_CHANNELS = {
     startService: 'fixer:startService',
     stopService: 'fixer:stopService',
     restartService: 'fixer:restartService',
+    listActionHistory: 'fixer:listActionHistory',
+    historyUpdated: 'fixer:historyUpdated',
     runUtilityAction: 'fixer:runUtilityAction',
     refreshDiagnostics: 'fixer:refreshDiagnostics'
   }
@@ -80,8 +87,13 @@ export interface RunUtilityActionRequest {
   action: 'flush-dns' | 'restart-explorer' | 'empty-recycle-bin';
 }
 
+export interface ListActionHistoryRequest {
+  limit?: number;
+}
+
 export interface IpcRequestMap {
   [IPC_CHANNELS.dashboard.getSnapshot]: undefined;
+  [IPC_CHANNELS.watchdog.getMonitorStatuses]: undefined;
   [IPC_CHANNELS.events.list]: EventsListRequest | undefined;
   [IPC_CHANNELS.settings.get]: undefined;
   [IPC_CHANNELS.settings.update]: UpdateSettingsRequest;
@@ -95,12 +107,14 @@ export interface IpcRequestMap {
   [IPC_CHANNELS.fixer.startService]: StartServiceRequest;
   [IPC_CHANNELS.fixer.stopService]: StopServiceRequest;
   [IPC_CHANNELS.fixer.restartService]: RestartServiceRequest;
+  [IPC_CHANNELS.fixer.listActionHistory]: ListActionHistoryRequest | undefined;
   [IPC_CHANNELS.fixer.runUtilityAction]: RunUtilityActionRequest;
   [IPC_CHANNELS.fixer.refreshDiagnostics]: undefined;
 }
 
 export interface IpcResponseMap {
   [IPC_CHANNELS.dashboard.getSnapshot]: SystemMetricsSnapshot;
+  [IPC_CHANNELS.watchdog.getMonitorStatuses]: WatchdogMonitorRuntime[];
   [IPC_CHANNELS.events.list]: WatchdogEvent[];
   [IPC_CHANNELS.settings.get]: AppSettings;
   [IPC_CHANNELS.settings.update]: AppSettings;
@@ -114,18 +128,22 @@ export interface IpcResponseMap {
   [IPC_CHANNELS.fixer.startService]: FixActionResult;
   [IPC_CHANNELS.fixer.stopService]: FixActionResult;
   [IPC_CHANNELS.fixer.restartService]: FixActionResult;
+  [IPC_CHANNELS.fixer.listActionHistory]: FixActionResult[];
   [IPC_CHANNELS.fixer.runUtilityAction]: FixActionResult;
   [IPC_CHANNELS.fixer.refreshDiagnostics]: FixActionResult;
 }
 
 export interface IpcEventMap {
   [IPC_CHANNELS.dashboard.updated]: SystemMetricsSnapshot;
+  [IPC_CHANNELS.watchdog.statusesUpdated]: WatchdogMonitorRuntime[];
   [IPC_CHANNELS.events.updated]: WatchdogEvent[];
   [IPC_CHANNELS.settings.updated]: AppSettings;
+  [IPC_CHANNELS.fixer.historyUpdated]: FixActionResult;
 }
 
 export interface DesktopApi {
   getDashboardSnapshot(): Promise<SystemMetricsSnapshot>;
+  getWatchdogMonitorStatuses(): Promise<WatchdogMonitorRuntime[]>;
   listRecentEvents(query?: WatchdogEventQuery): Promise<WatchdogEvent[]>;
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
@@ -139,9 +157,14 @@ export interface DesktopApi {
   startService(request: StartServiceRequest): Promise<FixActionResult>;
   stopService(request: StopServiceRequest): Promise<FixActionResult>;
   restartService(request: RestartServiceRequest): Promise<FixActionResult>;
+  listActionHistory(request?: ListActionHistoryRequest): Promise<FixActionResult[]>;
   runUtilityAction(request: RunUtilityActionRequest): Promise<FixActionResult>;
   refreshDiagnostics(): Promise<FixActionResult>;
   onDashboardUpdated(listener: (snapshot: SystemMetricsSnapshot) => void): () => void;
+  onWatchdogMonitorStatusesUpdated(
+    listener: (statuses: WatchdogMonitorRuntime[]) => void
+  ): () => void;
   onEventsUpdated(listener: (events: WatchdogEvent[]) => void): () => void;
   onSettingsUpdated(listener: (settings: AppSettings) => void): () => void;
+  onFixerHistoryUpdated(listener: (result: FixActionResult) => void): () => void;
 }

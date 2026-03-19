@@ -7,6 +7,7 @@ import type {
   DiskVolume,
   PlatformKey,
   ProcessInfo,
+  SystemIdentity,
   SystemMetricsSnapshot
 } from '@shared/models';
 import {
@@ -99,7 +100,11 @@ const collectObject = async <T extends object>(
 };
 
 export class SystemInformationProbe implements SystemProbe {
-  constructor(private readonly profile: ProbeProfile) {}
+  private readonly identityPromise: Promise<Omit<SystemIdentity, 'totalMemoryBytes' | 'bootedAt'>>;
+
+  constructor(private readonly profile: ProbeProfile) {
+    this.identityPromise = this.loadIdentity();
+  }
 
   async collectSnapshot(settings: AppSettings): Promise<SystemMetricsSnapshot> {
     const [cpuLoad, memoryStats, diskStats, networkStats, networkInterfaces, processStats] =
@@ -198,9 +203,21 @@ export class SystemInformationProbe implements SystemProbe {
       .sort(sortProcesses)
       .slice(0, 10);
 
+    const collectedAt = new Date().toISOString();
+    const staticIdentity = await this.identityPromise;
+    const bootedAt =
+      currentTime.uptime > 0
+        ? new Date(Date.now() - currentTime.uptime * 1000).toISOString()
+        : null;
+
     return {
-      collectedAt: new Date().toISOString(),
+      collectedAt,
       platform: this.profile.platform,
+      identity: {
+        ...staticIdentity,
+        totalMemoryBytes: memoryTotalBytes,
+        bootedAt
+      },
       cpu: {
         usagePercent: cpuUsagePercent,
         coreCount: os.cpus().length,
@@ -269,6 +286,25 @@ export class SystemInformationProbe implements SystemProbe {
         network: networkStatus
       }),
       history: []
+    };
+  }
+
+  private async loadIdentity(): Promise<Omit<SystemIdentity, 'totalMemoryBytes' | 'bootedAt'>> {
+    const [osInfo, cpuInfo] = await Promise.all([
+      safeCollect<si.Systeminformation.OsData | null>(() => si.osInfo(), null),
+      safeCollect<si.Systeminformation.CpuData | null>(() => si.cpu(), null)
+    ]);
+
+    const osName = [osInfo?.distro, osInfo?.codename].filter(Boolean).join(' ').trim();
+    const osVersion = [osInfo?.release, osInfo?.build].filter(Boolean).join(' · ').trim();
+
+    return {
+      deviceName: os.hostname(),
+      osName: osName || osInfo?.platform || process.platform,
+      osVersion: osVersion || 'Version unavailable',
+      kernelVersion: osInfo?.kernel || process.version,
+      architecture: osInfo?.arch || os.arch(),
+      cpuModel: cpuInfo?.brand || cpuInfo?.manufacturer || 'Unknown CPU'
     };
   }
 }

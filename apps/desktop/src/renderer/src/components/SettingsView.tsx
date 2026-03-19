@@ -305,6 +305,46 @@ export const SettingsView = ({
           </article>
 
           <article className="settings-card">
+            <label className="settings-field">
+              <span>Telemetry refresh interval</span>
+              <input
+                type="number"
+                min={1000}
+                max={60000}
+                step={1000}
+                value={settings.metricsRefreshIntervalMs}
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    metricsRefreshIntervalMs: Number(event.target.value)
+                  })
+                }
+              />
+              <small>Applies to the live dashboard polling timer after saving.</small>
+            </label>
+          </article>
+
+          <article className="settings-card">
+            <label className="settings-field">
+              <span>Theme preference</span>
+              <select
+                value={settings.theme}
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    theme: event.target.value as AppSettings['theme']
+                  })
+                }
+              >
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="system">System</option>
+              </select>
+              <small>Changes the renderer theme without changing OS settings.</small>
+            </label>
+          </article>
+
+          <article className="settings-card">
             <label className="toggle-card stacked">
               <div>
                 <p className="inventory-title">Telemetry summaries</p>

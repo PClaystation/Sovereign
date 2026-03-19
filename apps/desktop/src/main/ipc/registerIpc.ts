@@ -6,6 +6,7 @@ import type {
   EventsListRequest,
   ExecuteTempCleanupRequest,
   KillProcessRequest,
+  ListActionHistoryRequest,
   OpenProcessLocationRequest,
   RunUtilityActionRequest,
   StartServiceRequest,
@@ -31,6 +32,7 @@ interface RegisterIpcDependencies {
 
 const HANDLED_CHANNELS = [
   IPC_CHANNELS.dashboard.getSnapshot,
+  IPC_CHANNELS.watchdog.getMonitorStatuses,
   IPC_CHANNELS.events.list,
   IPC_CHANNELS.settings.get,
   IPC_CHANNELS.settings.update,
@@ -44,6 +46,7 @@ const HANDLED_CHANNELS = [
   IPC_CHANNELS.fixer.startService,
   IPC_CHANNELS.fixer.stopService,
   IPC_CHANNELS.fixer.restartService,
+  IPC_CHANNELS.fixer.listActionHistory,
   IPC_CHANNELS.fixer.runUtilityAction,
   IPC_CHANNELS.fixer.refreshDiagnostics
 ] as const;
@@ -64,6 +67,10 @@ export const registerIpcHandlers = ({
     dashboardService.getSnapshot()
   );
 
+  ipcMain.handle(IPC_CHANNELS.watchdog.getMonitorStatuses, async () =>
+    watchdogService.getMonitorStatuses()
+  );
+
   ipcMain.handle(
     IPC_CHANNELS.events.list,
     async (_event, request: EventsListRequest | undefined) =>
@@ -77,6 +84,7 @@ export const registerIpcHandlers = ({
     async (_event, request: UpdateSettingsRequest) => {
       const settings = await settingsStore.updateSettings(request);
       await watchdogService.updateSettings(settings);
+      dashboardService.updateSettings(settings);
       await dashboardService.refreshNow();
       onSettingsUpdated(settings);
       return settings;
@@ -134,6 +142,12 @@ export const registerIpcHandlers = ({
     IPC_CHANNELS.fixer.restartService,
     async (_event, request: RestartServiceRequest) =>
       fixerService.restartService(request)
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.fixer.listActionHistory,
+    async (_event, request: ListActionHistoryRequest | undefined) =>
+      fixerService.listActionHistory(request)
   );
 
   ipcMain.handle(
