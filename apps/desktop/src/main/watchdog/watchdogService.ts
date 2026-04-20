@@ -1,10 +1,14 @@
 import type {
   AppSettings,
   WatchdogEvent,
+  WatchdogConfidence,
   WatchdogMonitorId,
   WatchdogMonitorRuntime
 } from '@shared/models';
 import type { EventStore } from '@main/store/eventStore';
+import { createWatchdogEvent } from '@main/watchdog/eventFactory';
+import { buildKey } from '@main/watchdog/helpers';
+import { maxConfidence, maxSeverity } from '@main/watchdog/rules';
 
 import { ProcessLaunchMonitor } from './process/processLaunchMonitor';
 import { ScheduledTaskMonitor } from './scheduledTasks/scheduledTaskMonitor';
@@ -55,6 +59,61 @@ const MONITOR_METADATA: Array<
     windowsOnly: true
   }
 ];
+
+const createCorrelationSummaryEvents = (events: WatchdogEvent[]): WatchdogEvent[] => {
+  const groupedEvents = new Map<string, WatchdogEvent[]>();
+
+  for (const event of events) {
+    if (!event.correlationKey || event.kind === 'summary' || event.kind === 'status') {
+      continue;
+    }
+
+    const groupedItems = groupedEvents.get(event.correlationKey) || [];
+    groupedItems.push(event);
+    groupedEvents.set(event.correlationKey, groupedItems);
+  }
+
+  return [...groupedEvents.entries()]
+    .filter(([, groupedItems]) => groupedItems.length >= 2)
+    .map(([correlationKey, groupedItems]) => {
+      const subjectEvent =
+        groupedItems.find((event) => event.subjectPath || event.subjectName) || groupedItems[0];
+      const subjectLabel =
+        subjectEvent.subjectName ||
+        subjectEvent.subjectPath ||
+        'a related set of system changes';
+      const sources = [...new Set(groupedItems.map((event) => event.source))];
+      const severities = groupedItems.map((event) => event.severity);
+      const confidences = groupedItems.map((event) => event.confidence as WatchdogConfidence);
+      const pathSignals = [...new Set(groupedItems.flatMap((event) => event.pathSignals))];
+
+      return createWatchdogEvent({
+        source: groupedItems[0].source,
+        category: groupedItems[0].category,
+        severity: maxSeverity(...severities),
+        kind: 'summary',
+        confidence: maxConfidence(...confidences),
+        title: `Related watchdog changes around ${subjectLabel}`,
+        description:
+          'Sovereign observed multiple related watchdog events that point to the same subject or path.',
+        rationale:
+          'Grouping related events keeps the timeline focused on the larger story instead of showing only disconnected point-in-time changes.',
+        whyThisMatters:
+          'Correlated changes are often more important than any single low-signal event on its own.',
+        evidence: groupedItems.map(
+          (event) => `${event.title} (${event.source}, ${event.severity})`
+        ),
+        recommendedAction:
+          'Inspect the related events together before deciding whether this activity is expected.',
+        subjectName: subjectEvent.subjectName,
+        subjectPath: subjectEvent.subjectPath,
+        correlationKey,
+        pathSignals,
+        relatedEventCount: groupedItems.length,
+        fingerprint: buildKey('correlation-summary', correlationKey, ...sources.sort())
+      });
+    });
+};
 
 export class WatchdogService {
   private readonly listeners = new Set<WatchdogListener>();
@@ -179,26 +238,27 @@ export class WatchdogService {
     eventsInput: WatchdogEvent | WatchdogEvent[]
   ): Promise<void> {
     const events = Array.isArray(eventsInput) ? eventsInput : [eventsInput];
+    const correlatedEvents = [...events, ...createCorrelationSummaryEvents(events)];
 
-    if (events.length === 0) {
+    if (correlatedEvents.length === 0) {
       return;
     }
 
-    await this.eventStore.append(events);
+    await this.eventStore.append(correlatedEvents);
 
-    const newestTimestamp = [...events]
+    const newestTimestamp = [...correlatedEvents]
       .map((event) => event.timestamp)
       .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
 
     const currentStatus = this.monitorStatusMap.get(monitorId) as WatchdogMonitorRuntime;
     this.updateMonitorStatus(monitorId, {
       lastEventAt: newestTimestamp || currentStatus.lastEventAt,
-      eventCount: currentStatus.eventCount + events.length,
+      eventCount: currentStatus.eventCount + correlatedEvents.length,
       lastError: null,
       state: currentStatus.supported ? (this.isRunning ? 'active' : 'idle') : 'unsupported'
     });
 
-    this.listeners.forEach((listener) => listener(events));
+    this.listeners.forEach((listener) => listener(correlatedEvents));
   }
 
   private async syncMonitors(): Promise<void> {
@@ -223,10 +283,15 @@ export class WatchdogService {
 
       if (!this.initializedMonitorIds.has(registration.id)) {
         try {
-          await registration.monitor.initialize();
+          const currentStatus = this.monitorStatusMap.get(registration.id);
+          const initializationResult = await registration.monitor.initialize();
           this.initializedMonitorIds.add(registration.id);
           this.updateMonitorStatus(registration.id, {
             lastCheckedAt: new Date().toISOString(),
+            baselineCapturedAt: new Date().toISOString(),
+            baselineItemCount:
+              initializationResult?.baselineItemCount ?? currentStatus?.baselineItemCount ?? 0,
+            note: initializationResult?.note || null,
             lastError: null,
             state: supported ? (this.isRunning ? 'active' : 'idle') : 'unsupported'
           });
@@ -267,6 +332,9 @@ export class WatchdogService {
       state: supported ? (enabled && this.isRunning ? 'active' : 'idle') : 'unsupported',
       lastCheckedAt: null,
       lastEventAt: null,
+      baselineCapturedAt: null,
+      baselineItemCount: null,
+      note: null,
       lastError: null,
       eventCount: 0,
       pollingIntervalMs: registration.pollingIntervalMs

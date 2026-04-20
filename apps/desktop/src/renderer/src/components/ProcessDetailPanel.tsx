@@ -56,14 +56,32 @@ export const ProcessDetailPanel = ({
             <p>{formatRelativeTime(process.startedAt)}</p>
           </div>
           <div>
+            <p className="detail-label">Parent PID</p>
+            <p>{process.parentPid ?? 'Unavailable'}</p>
+          </div>
+          <div>
             <p className="detail-label">User</p>
             <p>{process.user || 'User unavailable'}</p>
           </div>
         </div>
 
         <div className="detail-section">
+          <p className="detail-label">Command line</p>
+          <p>{process.commandLine || 'Command line unavailable from the current telemetry source.'}</p>
+        </div>
+
+        <div className="detail-section">
           <p className="detail-label">File location</p>
           <p>{process.path || 'Path unavailable from the current telemetry source.'}</p>
+        </div>
+
+        <div className="detail-section">
+          <p className="detail-label">Path signals</p>
+          <p>
+            {process.pathSignals.length > 0
+              ? process.pathSignals.join(', ')
+              : 'No current path heuristics matched this process.'}
+          </p>
         </div>
 
         <div className="detail-actions">

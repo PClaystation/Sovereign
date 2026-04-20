@@ -3,6 +3,7 @@ import type {
   FixActionResult,
   ProcessInfo,
   ServiceSummary,
+  StartupBackupSummary,
   StartupItem,
   SystemMetricsSnapshot,
   TempCleanupPreview,
@@ -35,7 +36,9 @@ export const IPC_CHANNELS = {
     killProcess: 'fixer:killProcess',
     openProcessLocation: 'fixer:openProcessLocation',
     listStartupItems: 'fixer:listStartupItems',
+    listStartupBackups: 'fixer:listStartupBackups',
     disableStartupItem: 'fixer:disableStartupItem',
+    restoreStartupItem: 'fixer:restoreStartupItem',
     listServices: 'fixer:listServices',
     startService: 'fixer:startService',
     stopService: 'fixer:stopService',
@@ -66,6 +69,10 @@ export interface OpenProcessLocationRequest {
 
 export interface DisableStartupItemRequest {
   startupItemId: string;
+}
+
+export interface RestoreStartupItemRequest {
+  backupId: string;
 }
 
 export interface RestartServiceRequest {
@@ -102,7 +109,9 @@ export interface IpcRequestMap {
   [IPC_CHANNELS.fixer.killProcess]: KillProcessRequest;
   [IPC_CHANNELS.fixer.openProcessLocation]: OpenProcessLocationRequest;
   [IPC_CHANNELS.fixer.listStartupItems]: undefined;
+  [IPC_CHANNELS.fixer.listStartupBackups]: undefined;
   [IPC_CHANNELS.fixer.disableStartupItem]: DisableStartupItemRequest;
+  [IPC_CHANNELS.fixer.restoreStartupItem]: RestoreStartupItemRequest;
   [IPC_CHANNELS.fixer.listServices]: undefined;
   [IPC_CHANNELS.fixer.startService]: StartServiceRequest;
   [IPC_CHANNELS.fixer.stopService]: StopServiceRequest;
@@ -123,7 +132,9 @@ export interface IpcResponseMap {
   [IPC_CHANNELS.fixer.killProcess]: FixActionResult;
   [IPC_CHANNELS.fixer.openProcessLocation]: FixActionResult;
   [IPC_CHANNELS.fixer.listStartupItems]: StartupItem[];
+  [IPC_CHANNELS.fixer.listStartupBackups]: StartupBackupSummary[];
   [IPC_CHANNELS.fixer.disableStartupItem]: FixActionResult;
+  [IPC_CHANNELS.fixer.restoreStartupItem]: FixActionResult;
   [IPC_CHANNELS.fixer.listServices]: ServiceSummary[];
   [IPC_CHANNELS.fixer.startService]: FixActionResult;
   [IPC_CHANNELS.fixer.stopService]: FixActionResult;
@@ -152,7 +163,9 @@ export interface DesktopApi {
   killProcess(request: KillProcessRequest): Promise<FixActionResult>;
   openProcessLocation(request: OpenProcessLocationRequest): Promise<FixActionResult>;
   listStartupItems(): Promise<StartupItem[]>;
+  listStartupBackups(): Promise<StartupBackupSummary[]>;
   disableStartupItem(request: DisableStartupItemRequest): Promise<FixActionResult>;
+  restoreStartupItem(request: RestoreStartupItemRequest): Promise<FixActionResult>;
   listServices(): Promise<ServiceSummary[]>;
   startService(request: StartServiceRequest): Promise<FixActionResult>;
   stopService(request: StopServiceRequest): Promise<FixActionResult>;

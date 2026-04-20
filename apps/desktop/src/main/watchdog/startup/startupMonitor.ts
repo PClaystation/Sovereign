@@ -1,10 +1,15 @@
-import { randomUUID } from 'node:crypto';
-
 import type { WatchdogEvent } from '@shared/models';
-import { analyzeExecutablePath, maxSeverity } from '@main/watchdog/rules';
+import { createWatchdogEvent } from '@main/watchdog/eventFactory';
+import { FileTrustProvider } from '@main/watchdog/fileTrustProvider';
+import {
+  analyzeExecutablePath,
+  maxConfidence,
+  maxSeverity
+} from '@main/watchdog/rules';
 import type {
   EventPublisher,
   StartupItemRecord,
+  WatchdogMonitorInitializationResult,
   WatchdogMonitor
 } from '@main/watchdog/types';
 import { buildKey, extractCommandPath } from '@main/watchdog/helpers';
@@ -12,24 +17,6 @@ import { buildKey, extractCommandPath } from '@main/watchdog/helpers';
 import { WindowsStartupItemsProvider } from './windowsStartupItemsProvider';
 
 const POLL_INTERVAL_MS = 120_000;
-
-const createEvent = (
-  severity: WatchdogEvent['severity'],
-  title: string,
-  description: string,
-  evidence: string[],
-  recommendedAction: string
-): WatchdogEvent => ({
-  id: randomUUID(),
-  timestamp: new Date().toISOString(),
-  source: 'startup-items',
-  category: 'security',
-  severity,
-  title,
-  description,
-  evidence,
-  recommendedAction
-});
 
 const getIdentity = (item: StartupItemRecord): string =>
   buildKey(item.name, item.location, item.user);
@@ -39,6 +26,7 @@ const getCommandSignature = (item: StartupItemRecord): string =>
 
 export class StartupMonitor implements WatchdogMonitor {
   private readonly provider = new WindowsStartupItemsProvider();
+  private readonly fileTrustProvider = new FileTrustProvider();
   private knownItems = new Map<string, StartupItemRecord>();
   private pollTimer: NodeJS.Timeout | undefined;
   private reportedFailure = false;
@@ -46,18 +34,34 @@ export class StartupMonitor implements WatchdogMonitor {
 
   constructor(private readonly publish: EventPublisher) {}
 
-  async initialize(): Promise<void> {
+  async initialize(): Promise<WatchdogMonitorInitializationResult> {
     if (process.platform !== 'win32') {
       await this.publish(
-        createEvent(
-          'info',
-          'Startup inventory is Windows-only',
-          'Startup item monitoring currently uses the Windows startup command inventory and is unavailable on this platform.',
-          ['Current platform is not Windows.', 'Disabled startup entries are only observable through Windows-specific sources.'],
-          'Run Sovereign on Windows 11 to capture and compare startup items.'
-        )
+        createWatchdogEvent({
+          source: 'startup-items',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Startup inventory is Windows-only',
+          description:
+            'Startup item monitoring currently relies on Windows startup sources and is unavailable on this platform.',
+          rationale:
+            'The startup inventory provider uses Windows registry and startup-folder sources.',
+          whyThisMatters:
+            'Sovereign surfaces the platform limit explicitly instead of pretending it can read startup items everywhere.',
+          evidence: [
+            'Current platform is not Windows.',
+            'Disabled startup entries are only observable through Windows-specific sources.'
+          ],
+          recommendedAction: 'Run Sovereign on Windows 11 to capture and compare startup items.'
+        })
       );
-      return;
+
+      return {
+        baselineItemCount: 0,
+        note: 'Startup monitoring is only available on Windows.'
+      };
     }
 
     try {
@@ -66,33 +70,68 @@ export class StartupMonitor implements WatchdogMonitor {
         startupItems.map((item) => [getIdentity(item), item])
       );
 
-      const inventoryEvent = createEvent(
-        'info',
-        'Startup inventory captured',
-        'The watchdog recorded the current startup entries and will compare them for changes over time.',
-        [
+      const inventoryEvent = createWatchdogEvent({
+        source: 'startup-items',
+        category: 'security',
+        severity: 'info',
+        kind: 'baseline',
+        confidence: 'medium',
+        title: 'Startup inventory captured',
+        description:
+          'Sovereign recorded the current startup entries and will compare them for changes over time.',
+        rationale:
+          'This baseline establishes which visible startup entries were already present when the monitor initialized.',
+        whyThisMatters:
+          'New or changed startup items are easier to explain when the current baseline is explicit.',
+        evidence: [
           `Observed startup items: ${startupItems.length}`,
           'Source: Win32_StartupCommand',
           'Disabled startup entries may not be visible through this source.'
         ],
-        'Review unexpected startup entries carefully, especially if they point into user-writable paths.'
-      );
+        recommendedAction:
+          'Review unexpected startup entries carefully, especially if they point into user-writable paths.'
+      });
 
-      const flaggedItems = startupItems
-        .map((item) => this.createHeuristicEvent(item, 'Current startup item matches a path heuristic'))
+      const flaggedItems = (
+        await Promise.all(
+          startupItems.map((item) =>
+            this.createHeuristicEvent(item, 'Current startup item matches a path heuristic')
+          )
+        )
+      )
         .filter((event): event is WatchdogEvent => event !== null);
 
       await this.publish([inventoryEvent, ...flaggedItems]);
+
+      return {
+        baselineItemCount: startupItems.length,
+        note: 'Comparing visible startup entries and their commands.'
+      };
     } catch (error) {
       await this.publish(
-        createEvent(
-          'info',
-          'Startup inventory could not be read',
-          'The watchdog could not read startup items from the current Windows source.',
-          [error instanceof Error ? error.message : 'Unknown startup inventory error.'],
-          'Some environments restrict or reshape startup data. Compare with Task Manager startup entries if needed.'
-        )
+        createWatchdogEvent({
+          source: 'startup-items',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Startup inventory could not be read',
+          description:
+            'Sovereign could not read startup items from the current Windows source.',
+          rationale:
+            'The Windows startup inventory command failed during baseline capture.',
+          whyThisMatters:
+            'If startup data is unavailable, later add/change comparisons are limited until the next successful refresh.',
+          evidence: [error instanceof Error ? error.message : 'Unknown startup inventory error.'],
+          recommendedAction:
+            'Some environments restrict or reshape startup data. Compare with Task Manager startup entries if needed.'
+        })
       );
+
+      return {
+        baselineItemCount: 0,
+        note: 'Startup baseline capture failed. The monitor will retry.'
+      };
     }
   }
 
@@ -143,28 +182,46 @@ export class StartupMonitor implements WatchdogMonitor {
         const previousItem = this.knownItems.get(identity);
 
         if (!previousItem) {
-          events.push(this.createAddedEvent(item));
+          events.push(await this.createAddedEvent(item));
           continue;
         }
 
         if (getCommandSignature(previousItem) !== getCommandSignature(item)) {
-          events.push(this.createChangedEvent(previousItem, item));
+          events.push(await this.createChangedEvent(previousItem, item));
         }
       }
 
       for (const [identity, previousItem] of this.knownItems.entries()) {
         if (!nextItems.has(identity)) {
           events.push(
-            createEvent(
-              'info',
-              `Startup item removed: ${previousItem.name}`,
-              'A previously observed startup entry is no longer present in the latest inventory.',
-              [
+            createWatchdogEvent({
+              source: 'startup-items',
+              category: 'security',
+              severity: 'info',
+              kind: 'change',
+              confidence: 'medium',
+              title: `Startup item removed: ${previousItem.name}`,
+              description:
+                'A previously observed startup entry is no longer present in the latest inventory.',
+              rationale:
+                'The item was present in the baseline or a previous poll and is now absent from the current startup inventory.',
+              whyThisMatters:
+                'Startup removals are often benign, but they can explain why a previously persistent app stopped launching automatically.',
+              evidence: [
                 `Location: ${previousItem.location}`,
                 `Command: ${previousItem.command || 'Unavailable'}`
               ],
-              'Confirm that the removal matches an intentional uninstall or configuration change.'
-            )
+              recommendedAction:
+                'Confirm that the removal matches an intentional uninstall or configuration change.',
+              subjectName: previousItem.name,
+              subjectPath: extractCommandPath(previousItem.command),
+              fingerprint: buildKey(
+                'startup-item-removed',
+                previousItem.name,
+                previousItem.location,
+                previousItem.command
+              )
+            })
           );
         }
       }
@@ -184,75 +241,141 @@ export class StartupMonitor implements WatchdogMonitor {
       this.reportedFailure = true;
 
       await this.publish(
-        createEvent(
-          'info',
-          'Startup inventory refresh missed a polling cycle',
-          'The watchdog could not refresh startup items for one interval.',
-          [error instanceof Error ? error.message : 'Unknown startup polling error.'],
-          'The monitor will retry automatically. Compare with Task Manager if changes are urgent.'
-        )
+        createWatchdogEvent({
+          source: 'startup-items',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Startup inventory refresh missed a polling cycle',
+          description:
+            'Sovereign could not refresh startup items for one interval.',
+          rationale:
+            'The startup inventory provider failed during the current polling window.',
+          whyThisMatters:
+            'A missed cycle can hide a startup change until the next successful refresh.',
+          evidence: [error instanceof Error ? error.message : 'Unknown startup polling error.'],
+          recommendedAction:
+            'The monitor will retry automatically. Compare with Task Manager if changes are urgent.'
+        })
       );
     }
   }
 
-  private createAddedEvent(item: StartupItemRecord): WatchdogEvent {
-    const pathAssessment = analyzeExecutablePath(extractCommandPath(item.command));
+  private async createAddedEvent(item: StartupItemRecord): Promise<WatchdogEvent> {
+    const executablePath = extractCommandPath(item.command);
+    const pathAssessment = analyzeExecutablePath(executablePath);
+    const fileTrust = await this.fileTrustProvider.read(executablePath);
 
-    return createEvent(
-      pathAssessment.severity,
-      `Startup item added: ${item.name}`,
-      'A new startup entry appeared in the Windows startup inventory.',
-      [
+    return createWatchdogEvent({
+      source: 'startup-items',
+      category: 'security',
+      severity: pathAssessment.severity,
+      kind: 'change',
+      confidence: pathAssessment.confidence,
+      title: `Startup item added: ${item.name}`,
+      description: 'A new startup entry appeared in the Windows startup inventory.',
+      rationale: pathAssessment.rationale,
+      whyThisMatters:
+        'New startup entries change what launches automatically after sign-in and are worth confirming.',
+      evidence: [
         `Location: ${item.location}`,
         `Command: ${item.command || 'Unavailable'}`,
         ...(item.user ? [`User: ${item.user}`] : []),
-        ...pathAssessment.reasons
+        ...pathAssessment.reasons,
+        ...(fileTrust?.publisher ? [`Publisher: ${fileTrust.publisher}`] : []),
+        ...(fileTrust?.signatureStatus
+          ? [`Signature status: ${fileTrust.signatureStatus}`]
+          : [])
       ],
-      pathAssessment.recommendedAction
-    );
+      recommendedAction: pathAssessment.recommendedAction,
+      subjectName: item.name,
+      subjectPath: executablePath,
+      pathSignals: pathAssessment.labels,
+      fileTrust,
+      fingerprint: buildKey('startup-item-added', item.name, item.location, executablePath)
+    });
   }
 
-  private createChangedEvent(
+  private async createChangedEvent(
     previousItem: StartupItemRecord,
     nextItem: StartupItemRecord
-  ): WatchdogEvent {
-    const pathAssessment = analyzeExecutablePath(extractCommandPath(nextItem.command));
+  ): Promise<WatchdogEvent> {
+    const executablePath = extractCommandPath(nextItem.command);
+    const pathAssessment = analyzeExecutablePath(executablePath);
     const severity = maxSeverity('unusual', pathAssessment.severity);
+    const confidence = maxConfidence('medium', pathAssessment.confidence);
+    const fileTrust = await this.fileTrustProvider.read(executablePath);
 
-    return createEvent(
+    return createWatchdogEvent({
+      source: 'startup-items',
+      category: 'security',
       severity,
-      `Startup item changed: ${nextItem.name}`,
-      'An existing startup entry changed command or enabled state in the latest Windows inventory.',
-      [
+      kind: 'change',
+      confidence,
+      title: `Startup item changed: ${nextItem.name}`,
+      description:
+        'An existing startup entry changed command or enabled state in the latest Windows inventory.',
+      rationale:
+        pathAssessment.severity === 'info'
+          ? 'The startup command changed even though the new path does not currently match a heuristic.'
+          : pathAssessment.rationale,
+      whyThisMatters:
+        'Startup command changes alter what runs automatically and can indicate an installer update, a product repair, or an unexpected persistence change.',
+      evidence: [
         `Location: ${nextItem.location}`,
         `Previous command: ${previousItem.command || 'Unavailable'}`,
         `Current command: ${nextItem.command || 'Unavailable'}`,
-        ...pathAssessment.reasons
+        ...pathAssessment.reasons,
+        ...(fileTrust?.publisher ? [`Publisher: ${fileTrust.publisher}`] : [])
       ],
-      'Confirm that the startup change was intentional, especially if it now points into a user-writable path.'
-    );
+      recommendedAction:
+        'Confirm that the startup change was intentional, especially if it now points into a user-writable path.',
+      subjectName: nextItem.name,
+      subjectPath: executablePath,
+      pathSignals: pathAssessment.labels,
+      fileTrust,
+      fingerprint: buildKey('startup-item-changed', nextItem.name, nextItem.location)
+    });
   }
 
-  private createHeuristicEvent(
+  private async createHeuristicEvent(
     item: StartupItemRecord,
     title: string
-  ): WatchdogEvent | null {
-    const pathAssessment = analyzeExecutablePath(extractCommandPath(item.command));
+  ): Promise<WatchdogEvent | null> {
+    const executablePath = extractCommandPath(item.command);
+    const pathAssessment = analyzeExecutablePath(executablePath);
 
     if (pathAssessment.severity === 'info') {
       return null;
     }
 
-    return createEvent(
-      pathAssessment.severity,
-      `${title}: ${item.name}`,
-      'An observed startup entry already points into a path that matches one or more explainable heuristics.',
-      [
+    const fileTrust = await this.fileTrustProvider.read(executablePath);
+
+    return createWatchdogEvent({
+      source: 'startup-items',
+      category: 'security',
+      severity: pathAssessment.severity,
+      kind: 'baseline',
+      confidence: pathAssessment.confidence,
+      title: `${title}: ${item.name}`,
+      description:
+        'An observed startup entry already points into a path that matches one or more explainable heuristics.',
+      rationale: pathAssessment.rationale,
+      whyThisMatters:
+        'Startup entries in user-writable paths are worth validating because they run automatically and can blend in with legitimate software.',
+      evidence: [
         `Location: ${item.location}`,
         `Command: ${item.command || 'Unavailable'}`,
-        ...pathAssessment.reasons
+        ...pathAssessment.reasons,
+        ...(fileTrust?.publisher ? [`Publisher: ${fileTrust.publisher}`] : [])
       ],
-      pathAssessment.recommendedAction
-    );
+      recommendedAction: pathAssessment.recommendedAction,
+      subjectName: item.name,
+      subjectPath: executablePath,
+      pathSignals: pathAssessment.labels,
+      fileTrust,
+      fingerprint: buildKey('startup-item-baseline', item.name, item.location, executablePath)
+    });
   }
 }

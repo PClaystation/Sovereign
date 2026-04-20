@@ -9,9 +9,10 @@ import { FixerService } from '@main/fixer/fixerService';
 import { createSystemProbe } from '@main/platform/createSystemProbe';
 import { registerIpcHandlers } from '@main/ipc/registerIpc';
 import { DashboardService } from '@main/services/dashboardService';
-import { JsonActionHistoryStore } from '@main/store/jsonActionHistoryStore';
-import { JsonEventStore } from '@main/store/jsonEventStore';
-import { JsonSettingsStore } from '@main/store/jsonSettingsStore';
+import { SqliteActionHistoryStore } from '@main/store/sqliteActionHistoryStore';
+import { SqliteDatabase } from '@main/store/sqliteDatabase';
+import { SqliteEventStore } from '@main/store/sqliteEventStore';
+import { SqliteSettingsStore } from '@main/store/sqliteSettingsStore';
 import { WatchdogService } from '@main/watchdog/watchdogService';
 
 const WINDOW_CONFIG = {
@@ -30,6 +31,7 @@ let watchdogStartupTimer: NodeJS.Timeout | null = null;
 
 const STARTUP_LOG_DIRECTORY = path.join(os.tmpdir(), 'sovereign');
 const STARTUP_LOG_PATH = path.join(STARTUP_LOG_DIRECTORY, 'sovereign-startup.log');
+const STORE_DATABASE_FILE = 'sovereign.db';
 
 const logStartup = (message: string, error?: unknown): void => {
   const timestamp = new Date().toISOString();
@@ -84,7 +86,10 @@ const createMainWindow = async (): Promise<void> => {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      devTools: Boolean(process.env.ELECTRON_RENDERER_URL)
     }
   });
 
@@ -109,6 +114,17 @@ const createMainWindow = async (): Promise<void> => {
     logStartup('createMainWindow:render-process-gone', new Error(message));
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowedUrl = process.env.ELECTRON_RENDERER_URL;
+
+    if ((allowedUrl && url.startsWith(allowedUrl)) || (!allowedUrl && url.startsWith('file://'))) {
+      return;
+    }
+
+    event.preventDefault();
+  });
+
   mainWindow.focus();
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -124,11 +140,17 @@ const createMainWindow = async (): Promise<void> => {
 
 const initializeServices = async (): Promise<void> => {
   logStartup('initializeServices:start');
-  const actionHistoryStore = new JsonActionHistoryStore(
-    path.join(app.getPath('userData'), 'action-history.json')
+  const userDataPath = app.getPath('userData');
+  const sharedDatabase = new SqliteDatabase(path.join(userDataPath, STORE_DATABASE_FILE));
+  const actionHistoryStore = new SqliteActionHistoryStore(
+    sharedDatabase,
+    path.join(userDataPath, 'action-history.json')
   );
-  const eventStore = new JsonEventStore(path.join(app.getPath('userData'), 'events.json'));
-  const settingsStore = new JsonSettingsStore(path.join(app.getPath('userData'), 'settings.json'));
+  const eventStore = new SqliteEventStore(sharedDatabase, path.join(userDataPath, 'events.json'));
+  const settingsStore = new SqliteSettingsStore(
+    sharedDatabase,
+    path.join(userDataPath, 'settings.json')
+  );
 
   await actionHistoryStore.initialize();
   await settingsStore.initialize();

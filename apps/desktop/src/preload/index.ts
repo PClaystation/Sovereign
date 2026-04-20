@@ -8,6 +8,7 @@ import type {
   ListActionHistoryRequest,
   OpenProcessLocationRequest,
   RunUtilityActionRequest,
+  RestoreStartupItemRequest,
   StartServiceRequest,
   StopServiceRequest,
   RestartServiceRequest,
@@ -17,6 +18,7 @@ import type {
   AppSettings,
   FixActionResult,
   ServiceSummary,
+  StartupBackupSummary,
   StartupItem,
   SystemMetricsSnapshot,
   TempCleanupPreview,
@@ -56,9 +58,18 @@ const api: DesktopApi = {
     ) as Promise<FixActionResult>,
   listStartupItems: () =>
     ipcRenderer.invoke(IPC_CHANNELS.fixer.listStartupItems) as Promise<StartupItem[]>,
+  listStartupBackups: () =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.fixer.listStartupBackups
+    ) as Promise<StartupBackupSummary[]>,
   disableStartupItem: (request: DisableStartupItemRequest) =>
     ipcRenderer.invoke(
       IPC_CHANNELS.fixer.disableStartupItem,
+      request
+    ) as Promise<FixActionResult>,
+  restoreStartupItem: (request: RestoreStartupItemRequest) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.fixer.restoreStartupItem,
       request
     ) as Promise<FixActionResult>,
   listServices: () =>

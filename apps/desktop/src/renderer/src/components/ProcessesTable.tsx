@@ -21,25 +21,7 @@ interface ProcessesTableProps {
 }
 
 const getPathFlag = (process: ProcessInfo): string | null => {
-  const candidate = process.path?.toLowerCase() || '';
-
-  if (!candidate) {
-    return null;
-  }
-
-  if (candidate.includes('/appdata/local/temp/') || candidate.includes('\\appdata\\local\\temp\\')) {
-    return 'Temp path';
-  }
-
-  if (candidate.includes('/downloads/') || candidate.includes('\\downloads\\')) {
-    return 'Downloads';
-  }
-
-  if (candidate.includes('/appdata/') || candidate.includes('\\appdata\\')) {
-    return 'AppData';
-  }
-
-  return null;
+  return process.pathSignals[0] || null;
 };
 
 export const ProcessesTable = ({
@@ -141,7 +123,10 @@ export const ProcessesTable = ({
                 <td className="numeric-cell">
                   {formatBytes(process.memoryBytes)} · {formatPercentage(process.memoryPercent)}
                 </td>
-                <td className="numeric-cell">{formatRelativeTime(process.startedAt)}</td>
+                <td className="numeric-cell">
+                  {formatRelativeTime(process.startedAt)}
+                  {process.parentPid ? ` · PPID ${process.parentPid}` : ''}
+                </td>
                 <td>
                   <div className="table-actions">
                     <button

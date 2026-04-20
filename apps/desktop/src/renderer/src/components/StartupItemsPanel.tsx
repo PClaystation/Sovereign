@@ -1,23 +1,31 @@
-import type { StartupItem, SystemMetricsSnapshot } from '@shared/models';
+import type {
+  StartupBackupSummary,
+  StartupItem,
+  SystemMetricsSnapshot
+} from '@shared/models';
 
 interface StartupItemsPanelProps {
   items: StartupItem[];
+  backups: StartupBackupSummary[];
   searchValue: string;
   isLoading: boolean;
   actionsDisabled: boolean;
   platform: SystemMetricsSnapshot['platform'] | null;
   onSearchChange: (value: string) => void;
   onDisable: (item: StartupItem) => void;
+  onRestore: (backup: StartupBackupSummary) => void;
 }
 
 export const StartupItemsPanel = ({
   items,
+  backups,
   searchValue,
   isLoading,
   actionsDisabled,
   platform,
   onSearchChange,
-  onDisable
+  onDisable,
+  onRestore
 }: StartupItemsPanelProps) => (
   <section className="panel fixer-panel">
     <div className="panel-heading">
@@ -39,36 +47,69 @@ export const StartupItemsPanel = ({
       onChange={(event) => onSearchChange(event.target.value)}
     />
 
-    {isLoading && items.length === 0 ? (
+    {isLoading && items.length === 0 && backups.length === 0 ? (
       <div className="fixer-empty">Reading the current startup inventory.</div>
-    ) : items.length > 0 ? (
+    ) : items.length > 0 || backups.length > 0 ? (
       <div className="fixer-content">
-        <div className="inventory-list">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="inventory-row"
-            >
-              <div>
-                <p className="inventory-title">{item.name}</p>
-                <p className="inventory-copy">
-                  {item.location}
-                  {item.user ? ` · ${item.user}` : ''}
-                </p>
-                <p className="inventory-copy">{item.command || 'Command unavailable'}</p>
-              </div>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => onDisable(item)}
-                disabled={actionsDisabled || !item.canDisable}
-                title={item.actionSupportReason || 'Disable startup item'}
+        {items.length > 0 ? (
+          <div className="inventory-list">
+            {items.map((item) => (
+              <div
+                key={item.id}
+                className="inventory-row"
               >
-                Disable
-              </button>
+                <div>
+                  <p className="inventory-title">{item.name}</p>
+                  <p className="inventory-copy">
+                    {item.location}
+                    {item.user ? ` · ${item.user}` : ''}
+                  </p>
+                  <p className="inventory-copy">{item.command || 'Command unavailable'}</p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onDisable(item)}
+                  disabled={actionsDisabled || !item.canDisable}
+                  title={item.actionSupportReason || 'Disable startup item'}
+                >
+                  Disable
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {backups.length > 0 ? (
+          <div className="detail-section">
+            <p className="detail-label">Restorable backups</p>
+            <div className="inventory-list">
+              {backups.map((backup) => (
+                <div
+                  key={backup.id}
+                  className="inventory-row"
+                >
+                  <div>
+                    <p className="inventory-title">{backup.name}</p>
+                    <p className="inventory-copy">
+                      {backup.location} · Disabled {backup.disabledAt}
+                    </p>
+                    <p className="inventory-copy">{backup.command || 'Command unavailable'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onRestore(backup)}
+                    disabled={actionsDisabled || !backup.canRestore}
+                    title={backup.restoreSupportReason || 'Restore startup item'}
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ) : null}
       </div>
     ) : (
       <div className="fixer-empty">

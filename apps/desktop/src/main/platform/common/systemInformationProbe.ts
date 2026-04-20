@@ -18,6 +18,7 @@ import {
   getResourceAdvice
 } from '@main/services/healthRules';
 import type { SystemProbe } from '@main/platform/systemProbe';
+import { analyzeExecutablePath } from '@main/watchdog/rules';
 
 interface ProbeProfile {
   platform: PlatformKey;
@@ -190,16 +191,23 @@ export class SystemInformationProbe implements SystemProbe {
     const networkStatus = getNetworkStatus(totalBytesPerSec, healthRules.network);
 
     const topProcesses = processStats.list
-      .map((process): ProcessInfo => ({
-        pid: process.pid,
-        name: process.name || process.command || 'Unknown process',
-        cpuPercent: clampPercentage(process.cpu || 0),
-        memoryBytes: process.memRss || 0,
-        memoryPercent: clampPercentage(process.mem || 0),
-        path: process.path || null,
-        startedAt: process.started || null,
-        user: process.user || null
-      }))
+      .map((process): ProcessInfo => {
+        const pathAssessment = analyzeExecutablePath(process.path || null);
+
+        return {
+          pid: process.pid,
+          parentPid: typeof process.parentPid === 'number' ? process.parentPid : null,
+          name: process.name || process.command || 'Unknown process',
+          cpuPercent: clampPercentage(process.cpu || 0),
+          memoryBytes: process.memRss || 0,
+          memoryPercent: clampPercentage(process.mem || 0),
+          path: process.path || null,
+          commandLine: process.command || null,
+          startedAt: process.started || null,
+          user: process.user || null,
+          pathSignals: pathAssessment.labels
+        };
+      })
       .sort(sortProcesses)
       .slice(0, 10);
 

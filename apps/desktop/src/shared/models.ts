@@ -2,6 +2,15 @@ export type MetricStatus = 'healthy' | 'elevated' | 'stressed';
 export type WatchdogSeverity = 'info' | 'unusual' | 'suspicious';
 export type PlatformKey = 'windows' | 'macos' | 'linux' | 'unknown';
 export type WatchdogMonitorState = 'idle' | 'active' | 'degraded' | 'unsupported';
+export type WatchdogEventKind = 'status' | 'baseline' | 'change' | 'incident' | 'summary';
+export type WatchdogConfidence = 'low' | 'medium' | 'high';
+export type FileTrustSignatureStatus =
+  | 'trusted'
+  | 'unsigned'
+  | 'invalid'
+  | 'missing'
+  | 'error'
+  | 'unknown';
 export type WatchdogSourceId =
   | 'watchdog'
   | 'process-launch'
@@ -88,13 +97,16 @@ export interface NetworkMetrics {
 
 export interface ProcessInfo {
   pid: number;
+  parentPid: number | null;
   name: string;
   cpuPercent: number;
   memoryBytes: number;
   memoryPercent: number;
   path: string | null;
+  commandLine: string | null;
   startedAt: string | null;
   user: string | null;
+  pathSignals: string[];
 }
 
 export interface SystemIdentity {
@@ -162,16 +174,41 @@ export type WatchdogCategory =
   | 'storage'
   | 'security';
 
+export interface FileTrustInfo {
+  path: string;
+  exists: boolean;
+  publisher: string | null;
+  companyName: string | null;
+  productName: string | null;
+  signatureStatus: FileTrustSignatureStatus;
+  error: string | null;
+  verifiedAt: string;
+}
+
 export interface WatchdogEvent {
   id: string;
   timestamp: string;
   source: WatchdogSourceId;
   category: WatchdogCategory;
   severity: WatchdogSeverity;
+  kind: WatchdogEventKind;
+  confidence: WatchdogConfidence;
   title: string;
   description: string;
+  rationale: string;
+  whyThisMatters: string;
   evidence: string[];
   recommendedAction: string;
+  fingerprint: string;
+  correlationKey: string | null;
+  subjectName: string | null;
+  subjectPath: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrenceCount: number;
+  relatedEventCount: number;
+  pathSignals: string[];
+  fileTrust: FileTrustInfo | null;
 }
 
 export interface WatchdogEventQuery {
@@ -192,6 +229,19 @@ export interface StartupItem {
   user?: string | null;
   canDisable: boolean;
   actionSupportReason: string | null;
+}
+
+export interface StartupBackupSummary {
+  id: string;
+  startupItemId: string;
+  name: string;
+  command: string;
+  location: string;
+  sourceType: 'registry' | 'folder';
+  disabledAt: string;
+  backupPath: string | null;
+  canRestore: boolean;
+  restoreSupportReason: string | null;
 }
 
 export interface ScheduledTaskSummary {
@@ -228,6 +278,7 @@ export type FixActionKind =
   | 'restart-explorer'
   | 'empty-recycle-bin'
   | 'disable-startup-item'
+  | 'restore-startup-item'
   | 'refresh-diagnostics';
 
 export interface FixActionResult {
@@ -288,9 +339,21 @@ export interface WatchdogMonitorRuntime {
   state: WatchdogMonitorState;
   lastCheckedAt: string | null;
   lastEventAt: string | null;
+  baselineCapturedAt: string | null;
+  baselineItemCount: number | null;
+  note: string | null;
   lastError: string | null;
   eventCount: number;
   pollingIntervalMs: number;
+}
+
+export interface WatchdogSuppressionRule {
+  id: string;
+  kind: 'path' | 'fingerprint';
+  value: string;
+  label: string;
+  source: WatchdogSourceId | 'any';
+  createdAt: string;
 }
 
 export interface AppSettings {
@@ -305,6 +368,10 @@ export interface AppSettings {
     network: NetworkThresholds;
   };
   monitors: WatchdogMonitorSettings;
+  watchdog: {
+    showSuppressedEvents: boolean;
+    suppressions: WatchdogSuppressionRule[];
+  };
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -335,5 +402,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     startupMonitoring: true,
     scheduledTaskMonitoring: true,
     securityStatusMonitoring: true
+  },
+  watchdog: {
+    showSuppressedEvents: false,
+    suppressions: []
   }
 };

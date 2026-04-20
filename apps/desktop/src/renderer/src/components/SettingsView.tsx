@@ -13,6 +13,7 @@ interface SettingsViewProps {
   saveMessage: string | null;
   saveError: string | null;
   onChange: (settings: AppSettings) => void;
+  onRemoveSuppression: (suppressionId: string) => void;
   onSave: () => void;
   onReset: () => void;
 }
@@ -40,6 +41,7 @@ export const SettingsView = ({
   saveMessage,
   saveError,
   onChange,
+  onRemoveSuppression,
   onSave,
   onReset
 }: SettingsViewProps) => {
@@ -364,6 +366,30 @@ export const SettingsView = ({
               />
             </label>
           </article>
+
+          <article className="settings-card">
+            <label className="toggle-card stacked">
+              <div>
+                <p className="inventory-title">Show suppressed events</p>
+                <p className="inventory-copy">
+                  Keep events visible in the timeline even when they match a saved suppression rule.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.watchdog.showSuppressedEvents}
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    watchdog: {
+                      ...settings.watchdog,
+                      showSuppressedEvents: event.target.checked
+                    }
+                  })
+                }
+              />
+            </label>
+          </article>
         </div>
 
         <div className="settings-actions">
@@ -394,6 +420,50 @@ export const SettingsView = ({
           {saveMessage ? <p className="status-copy success">{saveMessage}</p> : null}
           {saveError ? <p className="status-copy failure">{saveError}</p> : null}
         </div>
+      </section>
+
+      <section className="panel settings-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="section-kicker">Noise control</p>
+            <h2>Watchdog suppressions</h2>
+          </div>
+          <p className="panel-meta">
+            Suppressions hide future matches for known-safe paths or event fingerprints.
+          </p>
+        </div>
+
+        {settings.watchdog.suppressions.length > 0 ? (
+          <div className="inventory-list">
+            {settings.watchdog.suppressions.map((suppression) => (
+              <div
+                key={suppression.id}
+                className="inventory-row"
+              >
+                <div>
+                  <p className="inventory-title">{suppression.label}</p>
+                  <p className="inventory-copy">
+                    {suppression.kind} · {suppression.source}
+                  </p>
+                  <p className="inventory-copy">{suppression.value}</p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onRemoveSuppression(suppression.id)}
+                  disabled={isSaving}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="state-block">
+            No suppressions saved. Use an event detail panel to suppress future alerts
+            for a known-safe path or fingerprint.
+          </div>
+        )}
       </section>
 
       <section className="panel settings-panel">

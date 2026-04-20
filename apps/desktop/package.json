@@ -9,12 +9,14 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "package:win": "npm run build && set \"ELECTRON_CACHE=..\\..\\.electron-cache\" && set \"ELECTRON_BUILDER_CACHE=..\\..\\.electron-builder-cache\" && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "sql.js": "^1.14.1",
     "systeminformation": "^5.31.4"
   },
   "devDependencies": {
@@ -25,6 +27,7 @@
     "electron": "^30.0.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },

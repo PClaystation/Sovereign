@@ -28,21 +28,27 @@ The current app includes:
 - scheduled task summaries and change detection on Windows when readable
 - Defender and firewall status reads on Windows when readable
 - a watchdog coverage panel that surfaces active, degraded, disabled, and unsupported monitor states
+- per-monitor baseline capture details so empty watchdog views are explained instead of backfilled with fake events
 - a filterable recent-events timeline and event detail panel with evidence and recommended action
+- correlated watchdog summary events when multiple related changes point to the same subject or path
+- richer watchdog event detail including rationale, confidence, first/last seen, occurrence count, subject path, and file-trust metadata when available
 - event timeline search plus source-based filtering in addition to severity/category filters
 - a settings view for severity thresholds, monitor toggles, timeline limits, and telemetry-summary preferences
+- saved watchdog suppressions for known-safe paths or fingerprints, plus a toggle to show suppressed events
 - theme preference controls for dark, light, or system rendering
 - a live refresh-interval control that actually reconfigures dashboard polling after save
 - safe temp cleanup with preview-first execution
 - explicit process actions for opening file locations and ending processes
 - explicit Windows service restart controls
 - explicit startup item disable controls
+- explicit startup item restore controls using local backup records
 - a manual diagnostics refresh that re-polls both telemetry and watchdog providers
 - a persisted action history log for repair and control actions, surfaced both in the dashboard and the actions workspace
-- a persisted local event store abstraction for watchdog history
-- a persisted local settings store that updates dashboard thresholds and watchdog monitor coverage
+- a persisted SQLite-backed local store for watchdog history, settings, and operator action history
+- automatic migration of legacy JSON-backed settings, event history, and action history when those files already exist
 - strongly typed IPC contracts shared between Electron main and renderer
 - a platform adapter boundary so Windows-specific collectors can grow without leaking into the UI
+- renderer-side tests for watchdog suppression matching and main-process tests for path heuristics
 
 ## Project structure
 
@@ -97,6 +103,12 @@ This starts `electron-vite` in development mode, launches the Electron shell, an
 npm run typecheck
 ```
 
+## Test
+
+```bash
+npm run test
+```
+
 ## Build
 
 ```bash
@@ -122,7 +134,7 @@ This runs the production build and asks `electron-builder` to generate a Windows
 - `src/main/fixer` now also persists and broadcasts recent fixer results for the renderer action log.
 - `src/main/platform` contains platform adapters for system telemetry collection.
 - `src/main/services/dashboardService.ts` refreshes live snapshots on a timer, maintains a short rolling sample history for graphs, applies settings-backed thresholds to health summaries, and now reconfigures its timer when the saved refresh interval changes.
-- `src/main/store` contains the local event/settings store abstractions and JSON-backed implementations.
+- `src/main/store` contains the local event/settings/action-history store abstractions and the SQLite-backed implementation used by the current build.
 - `src/main/watchdog` contains explainable monitors and Windows command providers for watchdog reads, plus runtime coverage state for each feed.
 - `src/main/ipc/registerIpc.ts` wires typed IPC handlers to services.
 
@@ -139,18 +151,19 @@ This runs the production build and asks `electron-builder` to generate a Windows
 
 ## Local persistence
 
-The current build uses JSON-backed event and settings stores in the Electron main process. Those files are created under Electron's `userData` directory so watchdog history and local dashboard preferences persist across launches without introducing a heavier database before the schema settles.
+The current build uses a SQLite-backed local store in the Electron main process. The database is created under Electron's `userData` directory and persists watchdog history, operator action history, and local dashboard preferences across launches. If legacy JSON-backed settings, event history, or action history files already exist, Sovereign imports them into SQLite during startup instead of dropping that local history.
 
 ## Notes and current limitations
 
 - Windows is the product target, but the app still includes non-Windows fallbacks so development can run on macOS and Linux. Windows-only watchdog sources emit transparent informational events when they are unavailable off-platform.
 - Startup item monitoring currently uses `Win32_StartupCommand`, which may not expose every disabled startup entry.
 - Startup item disable is only implemented for inventory sources that Sovereign can trace explicitly. Permission failures are surfaced instead of bypassed.
+- Startup item restore only covers entries that Sovereign itself previously disabled and recorded in its local backup manifest.
 - Scheduled task summaries rely on `Get-ScheduledTask` and `Get-ScheduledTaskInfo`; some environments can limit or hide task details.
 - Defender and firewall reads rely on local PowerShell cmdlets. If those cmdlets are unavailable or a different security product replaces Defender, Sovereign reports that limitation instead of pretending to know more.
 - Severity is heuristic, not authoritative. Temp, Downloads, and AppData path matches are intentionally explainable signals, not proof of malicious behavior.
+- File-trust metadata relies on local Authenticode and version-info reads. Missing publisher or signature data should be treated as a transparency limit, not an automatic verdict.
 - Temp cleanup only targets previewed top-level items in the current user temp root and skips newer files by design.
 - Process termination, service restart, and startup disable can still fail because of Windows permissions or active file/service locks; those failures are returned directly to the UI.
 - Monitor runtime status reflects what Sovereign itself could initialize or refresh during the current app session. It is not an independent guarantee that every Windows source is healthy outside the app.
-- Re-enable flows for disabled startup items are not exposed in the UI yet, even though Sovereign records local backup metadata where possible.
-- The current settings page controls thresholds and monitor toggles, but it does not yet expose re-enable flows, scheduled-task tuning, or Windows-specific exclusion lists.
+- The current settings page controls thresholds, monitor toggles, and suppressions, but it does not yet expose scheduled-task tuning, signer allowlists, or Windows-specific exclusion lists.

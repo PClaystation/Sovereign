@@ -1,25 +1,23 @@
-import path from 'node:path';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
 import {
   DEFAULT_APP_SETTINGS,
   type AppSettings,
   type NetworkThresholds,
-  type PercentThresholds
+  type PercentThresholds,
+  type WatchdogSuppressionRule
 } from '@shared/models';
 
 import type { SettingsStore } from './settingsStore';
+import type { SqliteDatabase } from './sqliteDatabase';
 
-interface SettingsStoreFile {
-  version: 1;
-  settings: AppSettings;
-}
-
-const SETTINGS_VERSION = 1 as const;
+const SETTINGS_KEY = 'current';
 const MAX_NETWORK_BYTES_PER_SEC = 500 * 1024 * 1024;
 
-const isNotFoundError = (error: unknown): error is NodeJS.ErrnoException =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+interface LegacySettingsStoreFile {
+  version: number;
+  settings: AppSettings;
+}
 
 const cloneSettings = (settings: AppSettings): AppSettings =>
   JSON.parse(JSON.stringify(settings)) as AppSettings;
@@ -72,6 +70,23 @@ const normalizeNetworkThresholds = (
     stressedBytesPerSec: Math.max(stressedBytesPerSec, elevatedBytesPerSec + 1)
   };
 };
+
+const normalizeSuppressions = (
+  candidate: WatchdogSuppressionRule[] | undefined
+): WatchdogSuppressionRule[] =>
+  Array.isArray(candidate)
+    ? candidate
+        .filter((rule) => typeof rule?.id === 'string' && typeof rule?.value === 'string')
+        .map((rule): WatchdogSuppressionRule => ({
+          id: rule.id.trim(),
+          kind: rule.kind === 'path' ? 'path' : 'fingerprint',
+          value: rule.value.trim(),
+          label: rule.label?.trim() || rule.value.trim(),
+          source: rule.source && rule.source !== 'any' ? rule.source : 'any',
+          createdAt: rule.createdAt || new Date().toISOString()
+        }))
+        .filter((rule) => rule.id && rule.value)
+    : [];
 
 const normalizeSettings = (candidate: unknown): AppSettings => {
   const parsedSettings = candidate as Partial<AppSettings> | undefined;
@@ -134,18 +149,63 @@ const normalizeSettings = (candidate: unknown): AppSettings => {
         typeof parsedSettings?.monitors?.securityStatusMonitoring === 'boolean'
           ? parsedSettings.monitors.securityStatusMonitoring
           : DEFAULT_APP_SETTINGS.monitors.securityStatusMonitoring
+    },
+    watchdog: {
+      showSuppressedEvents:
+        typeof parsedSettings?.watchdog?.showSuppressedEvents === 'boolean'
+          ? parsedSettings.watchdog.showSuppressedEvents
+          : DEFAULT_APP_SETTINGS.watchdog.showSuppressedEvents,
+      suppressions: normalizeSuppressions(parsedSettings?.watchdog?.suppressions)
     }
   };
 };
 
-export class JsonSettingsStore implements SettingsStore {
+const parseLegacySettings = async (legacyPath?: string): Promise<AppSettings | null> => {
+  if (!legacyPath) {
+    return null;
+  }
+
+  try {
+    const rawStore = await readFile(legacyPath, 'utf8');
+    const parsedStore = JSON.parse(rawStore) as Partial<LegacySettingsStoreFile>;
+    return normalizeSettings(parsedStore.settings);
+  } catch {
+    return null;
+  }
+};
+
+export class SqliteSettingsStore implements SettingsStore {
   private currentSettings = cloneSettings(DEFAULT_APP_SETTINGS);
 
-  constructor(private readonly storePath: string) {}
+  constructor(
+    private readonly database: SqliteDatabase,
+    private readonly legacySettingsPath?: string
+  ) {}
 
   async initialize(): Promise<void> {
-    const currentStore = await this.readStore();
-    this.currentSettings = currentStore.settings;
+    await this.database.initialize();
+    const storedSettings = await this.database.read((database) => {
+      const row = this.database.queryRows(
+        database,
+        `SELECT value FROM app_settings WHERE key = ? LIMIT 1`,
+        [SETTINGS_KEY]
+      )[0];
+
+      if (!row) {
+        return null;
+      }
+
+      return normalizeSettings(row.value ? JSON.parse(String(row.value)) : undefined);
+    });
+
+    if (storedSettings) {
+      this.currentSettings = storedSettings;
+      return;
+    }
+
+    const legacySettings = await parseLegacySettings(this.legacySettingsPath);
+    this.currentSettings = legacySettings || cloneSettings(DEFAULT_APP_SETTINGS);
+    await this.persistSettings(this.currentSettings);
   }
 
   getSettings(): AppSettings {
@@ -154,41 +214,16 @@ export class JsonSettingsStore implements SettingsStore {
 
   async updateSettings(settings: AppSettings): Promise<AppSettings> {
     this.currentSettings = normalizeSettings(settings);
-    await this.writeStore({
-      version: SETTINGS_VERSION,
-      settings: this.currentSettings
-    });
-
+    await this.persistSettings(this.currentSettings);
     return this.getSettings();
   }
 
-  private async readStore(): Promise<SettingsStoreFile> {
-    await mkdir(path.dirname(this.storePath), { recursive: true });
-
-    try {
-      const rawStore = await readFile(this.storePath, 'utf8');
-      const parsedStore = JSON.parse(rawStore) as Partial<SettingsStoreFile>;
-      const settings = normalizeSettings(parsedStore.settings);
-
-      return {
-        version: SETTINGS_VERSION,
-        settings
-      };
-    } catch (error) {
-      if (!isNotFoundError(error)) {
-        console.warn('[settings] failed to read settings store, rewriting defaults', error);
-      }
-
-      const defaultStore = {
-        version: SETTINGS_VERSION,
-        settings: cloneSettings(DEFAULT_APP_SETTINGS)
-      };
-      await this.writeStore(defaultStore);
-      return defaultStore;
-    }
-  }
-
-  private async writeStore(store: SettingsStoreFile): Promise<void> {
-    await writeFile(this.storePath, JSON.stringify(store, null, 2), 'utf8');
+  private async persistSettings(settings: AppSettings): Promise<void> {
+    await this.database.write((database) => {
+      database.run(
+        `INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)`,
+        [SETTINGS_KEY, JSON.stringify(settings)]
+      );
+    });
   }
 }

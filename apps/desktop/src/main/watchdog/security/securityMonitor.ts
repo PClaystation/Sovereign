@@ -1,36 +1,17 @@
-import { randomUUID } from 'node:crypto';
-
 import type { WatchdogEvent } from '@shared/models';
+import { createWatchdogEvent } from '@main/watchdog/eventFactory';
 import type {
   DefenderStatusSnapshot,
   EventPublisher,
   FirewallProfileSnapshot,
   SecurityStatusSnapshot,
+  WatchdogMonitorInitializationResult,
   WatchdogMonitor
 } from '@main/watchdog/types';
 
 import { WindowsSecurityStatusProvider } from './windowsSecurityStatusProvider';
 
 const POLL_INTERVAL_MS = 90_000;
-
-const createEvent = (
-  source: WatchdogEvent['source'],
-  severity: WatchdogEvent['severity'],
-  title: string,
-  description: string,
-  evidence: string[],
-  recommendedAction: string
-): WatchdogEvent => ({
-  id: randomUUID(),
-  timestamp: new Date().toISOString(),
-  source,
-  category: 'security',
-  severity,
-  title,
-  description,
-  evidence,
-  recommendedAction
-});
 
 const getDefenderSignature = (status: DefenderStatusSnapshot | null): string =>
   JSON.stringify(status);
@@ -51,19 +32,29 @@ const createDefenderEvent = (
   hasPreviousSnapshot: boolean
 ): WatchdogEvent => {
   if (!defenderStatus || !defenderStatus.available) {
-    return createEvent(
-      'defender-status',
-      'info',
-      hasPreviousSnapshot
+    return createWatchdogEvent({
+      source: 'defender-status',
+      category: 'security',
+      severity: 'info',
+      kind: 'status',
+      confidence: 'low',
+      title: hasPreviousSnapshot
         ? 'Defender status is no longer readable'
         : 'Defender status could not be read',
-      'Sovereign could not confirm Microsoft Defender status from the current Windows command surface.',
-      [
+      description:
+        'Sovereign could not confirm Microsoft Defender status from the current Windows command surface.',
+      rationale:
+        'The Defender status command was unavailable or returned incomplete data.',
+      whyThisMatters:
+        'Unreadable status does not prove the device is unprotected, but it does reduce certainty about the current posture.',
+      evidence: [
         defenderStatus?.error || 'The Defender PowerShell cmdlet was unavailable.',
         'This does not prove that the device is unprotected.'
       ],
-      'Compare with Windows Security or other endpoint protection tools before drawing conclusions.'
-    );
+      recommendedAction:
+        'Compare with Windows Security or other endpoint protection tools before drawing conclusions.',
+      fingerprint: 'defender-status-readable'
+    });
   }
 
   const disabledCoreProtections =
@@ -76,45 +67,74 @@ const createDefenderEvent = (
     defenderStatus.serviceEnabled === false;
 
   if (disabledCoreProtections) {
-    return createEvent(
-      'defender-status',
-      'suspicious',
-      hasPreviousSnapshot ? 'Defender protection changed' : 'Defender protection appears reduced',
-      'One or more core Defender protections are reported as disabled.',
-      [
+    return createWatchdogEvent({
+      source: 'defender-status',
+      category: 'security',
+      severity: 'suspicious',
+      kind: hasPreviousSnapshot ? 'change' : 'status',
+      confidence: 'high',
+      title: hasPreviousSnapshot
+        ? 'Defender protection changed'
+        : 'Defender protection appears reduced',
+      description: 'One or more core Defender protections are reported as disabled.',
+      rationale:
+        'Core Defender protections, such as antivirus or real-time protection, reported a disabled state.',
+      whyThisMatters:
+        'Reduced core protection materially changes the local security posture, even if another product is intended to take over.',
+      evidence: [
         `Antivirus enabled: ${defenderStatus.antivirusEnabled ? 'yes' : 'no'}`,
         `Real-time protection: ${
           defenderStatus.realTimeProtectionEnabled ? 'yes' : 'no'
         }`,
         `Service enabled: ${defenderStatus.serviceEnabled ? 'yes' : 'no'}`
       ],
-      'Confirm whether this reduction was intentional or whether another security product replaced these protections.'
-    );
+      recommendedAction:
+        'Confirm whether this reduction was intentional or whether another security product replaced these protections.',
+      fingerprint: 'defender-core-protection'
+    });
   }
 
   if (disabledSecondaryProtections) {
-    return createEvent(
-      'defender-status',
-      'unusual',
-      hasPreviousSnapshot ? 'Defender status changed' : 'Defender status shows partial coverage',
-      'Microsoft Defender is readable, but one or more secondary protections are reported as disabled.',
-      [
+    return createWatchdogEvent({
+      source: 'defender-status',
+      category: 'security',
+      severity: 'unusual',
+      kind: hasPreviousSnapshot ? 'change' : 'status',
+      confidence: 'medium',
+      title: hasPreviousSnapshot ? 'Defender status changed' : 'Defender status shows partial coverage',
+      description:
+        'Microsoft Defender is readable, but one or more secondary protections are reported as disabled.',
+      rationale:
+        'Defender reported a partial protection state rather than full coverage.',
+      whyThisMatters:
+        'Partial coverage may be intentional, but it is still a meaningful posture change worth confirming.',
+      evidence: [
         `Behavior monitoring: ${
           defenderStatus.behaviorMonitorEnabled ? 'yes' : 'no'
         }`,
         `IOAV protection: ${defenderStatus.ioavProtectionEnabled ? 'yes' : 'no'}`,
         `Antispyware: ${defenderStatus.antispywareEnabled ? 'yes' : 'no'}`
       ],
-      'Review the current Windows Security configuration and confirm whether these settings are expected.'
-    );
+      recommendedAction:
+        'Review the current Windows Security configuration and confirm whether these settings are expected.',
+      fingerprint: 'defender-partial-coverage'
+    });
   }
 
-  return createEvent(
-    'defender-status',
-    'info',
-    hasPreviousSnapshot ? 'Defender status refreshed' : 'Defender status looks healthy',
-    'Microsoft Defender reported its core protections as enabled at the last check.',
-    [
+  return createWatchdogEvent({
+    source: 'defender-status',
+    category: 'security',
+    severity: 'info',
+    kind: hasPreviousSnapshot ? 'change' : 'status',
+    confidence: 'medium',
+    title: hasPreviousSnapshot ? 'Defender status refreshed' : 'Defender status looks healthy',
+    description:
+      'Microsoft Defender reported its core protections as enabled at the last check.',
+    rationale:
+      'The current Defender snapshot reported its core protections as enabled.',
+    whyThisMatters:
+      'Healthy status events provide useful posture context, but they are not a guarantee about every security control on the device.',
+    evidence: [
       `Antivirus enabled: ${defenderStatus.antivirusEnabled ? 'yes' : 'no'}`,
       `Real-time protection: ${
         defenderStatus.realTimeProtectionEnabled ? 'yes' : 'no'
@@ -123,8 +143,10 @@ const createDefenderEvent = (
         defenderStatus.behaviorMonitorEnabled ? 'yes' : 'no'
       }`
     ],
-    'Treat this as a current status snapshot rather than a guarantee about every security control on the device.'
-  );
+    recommendedAction:
+      'Treat this as a current status snapshot rather than a guarantee about every security control on the device.',
+    fingerprint: 'defender-healthy'
+  });
 };
 
 const createFirewallEvent = (
@@ -132,44 +154,71 @@ const createFirewallEvent = (
   hasPreviousSnapshot: boolean
 ): WatchdogEvent => {
   if (firewallProfiles.length === 0 || firewallProfiles.every((profile) => profile.error)) {
-    return createEvent(
-      'firewall-status',
-      'info',
-      hasPreviousSnapshot
+    return createWatchdogEvent({
+      source: 'firewall-status',
+      category: 'security',
+      severity: 'info',
+      kind: 'status',
+      confidence: 'low',
+      title: hasPreviousSnapshot
         ? 'Firewall status is no longer readable'
         : 'Firewall status could not be read',
-      'Sovereign could not confirm Windows Firewall profile states from the current Windows command surface.',
-      [
+      description:
+        'Sovereign could not confirm Windows Firewall profile states from the current Windows command surface.',
+      rationale:
+        'The firewall profile command was unavailable or returned incomplete data.',
+      whyThisMatters:
+        'Unreadable firewall state does not prove it is disabled, but it reduces certainty about the current network posture.',
+      evidence: [
         firewallProfiles[0]?.error || 'The firewall PowerShell cmdlet was unavailable.',
         'This does not prove that the firewall is disabled.'
       ],
-      'Compare with Windows Defender Firewall settings before drawing conclusions.'
-    );
+      recommendedAction:
+        'Compare with Windows Defender Firewall settings before drawing conclusions.',
+      fingerprint: 'firewall-status-readable'
+    });
   }
 
   const disabledProfiles = firewallProfiles.filter((profile) => profile.enabled === false);
 
   if (disabledProfiles.length === firewallProfiles.length && firewallProfiles.length > 0) {
-    return createEvent(
-      'firewall-status',
-      'suspicious',
-      hasPreviousSnapshot ? 'Firewall profile state changed' : 'Firewall appears broadly disabled',
-      'All readable firewall profiles are currently reported as disabled.',
-      disabledProfiles.map(
+    return createWatchdogEvent({
+      source: 'firewall-status',
+      category: 'security',
+      severity: 'suspicious',
+      kind: hasPreviousSnapshot ? 'change' : 'status',
+      confidence: 'high',
+      title: hasPreviousSnapshot ? 'Firewall profile state changed' : 'Firewall appears broadly disabled',
+      description: 'All readable firewall profiles are currently reported as disabled.',
+      rationale:
+        'Every readable firewall profile reported a disabled state.',
+      whyThisMatters:
+        'A broadly disabled firewall materially changes the machine’s network exposure.',
+      evidence: disabledProfiles.map(
         (profile) =>
           `${profile.name}: disabled (inbound ${profile.defaultInboundAction || 'unknown'}, outbound ${profile.defaultOutboundAction || 'unknown'})`
       ),
-      'Confirm whether this is intentional. A fully disabled firewall is uncommon on a managed Windows desktop.'
-    );
+      recommendedAction:
+        'Confirm whether this is intentional. A fully disabled firewall is uncommon on a managed Windows desktop.',
+      fingerprint: 'firewall-disabled'
+    });
   }
 
   if (disabledProfiles.length > 0) {
-    return createEvent(
-      'firewall-status',
-      'unusual',
-      hasPreviousSnapshot ? 'Firewall profile state changed' : 'One or more firewall profiles are disabled',
-      'At least one readable firewall profile is currently reported as disabled.',
-      firewallProfiles.map(
+    return createWatchdogEvent({
+      source: 'firewall-status',
+      category: 'security',
+      severity: 'unusual',
+      kind: hasPreviousSnapshot ? 'change' : 'status',
+      confidence: 'medium',
+      title: hasPreviousSnapshot ? 'Firewall profile state changed' : 'One or more firewall profiles are disabled',
+      description:
+        'At least one readable firewall profile is currently reported as disabled.',
+      rationale:
+        'One or more firewall profiles reported a disabled state while other readable profiles remained enabled.',
+      whyThisMatters:
+        'Mixed firewall states can be intentional, but they still change the effective network posture and should be confirmed.',
+      evidence: firewallProfiles.map(
         (profile) =>
           `${profile.name}: ${
             profile.enabled ? 'enabled' : 'disabled'
@@ -177,23 +226,35 @@ const createFirewallEvent = (
             profile.defaultOutboundAction || 'unknown'
           })`
       ),
-      'Review the firewall profile configuration and confirm whether the disabled profile is expected.'
-    );
+      recommendedAction:
+        'Review the firewall profile configuration and confirm whether the disabled profile is expected.',
+      fingerprint: 'firewall-partial-disabled'
+    });
   }
 
-  return createEvent(
-    'firewall-status',
-    'info',
-    hasPreviousSnapshot ? 'Firewall status refreshed' : 'Firewall profiles look enabled',
-    'Readable Windows Firewall profiles were reported as enabled at the last check.',
-    firewallProfiles.map(
+  return createWatchdogEvent({
+    source: 'firewall-status',
+    category: 'security',
+    severity: 'info',
+    kind: hasPreviousSnapshot ? 'change' : 'status',
+    confidence: 'medium',
+    title: hasPreviousSnapshot ? 'Firewall status refreshed' : 'Firewall profiles look enabled',
+    description:
+      'Readable Windows Firewall profiles were reported as enabled at the last check.',
+    rationale:
+      'The current firewall snapshot reported enabled states for the readable profiles.',
+    whyThisMatters:
+      'Healthy status events provide posture context, but they are still only a snapshot of the currently readable firewall profiles.',
+    evidence: firewallProfiles.map(
       (profile) =>
         `${profile.name}: enabled (inbound ${profile.defaultInboundAction || 'unknown'}, outbound ${
           profile.defaultOutboundAction || 'unknown'
         })`
     ),
-    'Treat this as a current status snapshot and re-check if the network posture changes later.'
-  );
+    recommendedAction:
+      'Treat this as a current status snapshot and re-check if the network posture changes later.',
+    fingerprint: 'firewall-healthy'
+  });
 };
 
 export class SecurityMonitor implements WatchdogMonitor {
@@ -205,43 +266,83 @@ export class SecurityMonitor implements WatchdogMonitor {
 
   constructor(private readonly publish: EventPublisher) {}
 
-  async initialize(): Promise<void> {
+  async initialize(): Promise<WatchdogMonitorInitializationResult> {
     if (process.platform !== 'win32') {
       await this.publish([
-        createEvent(
-          'defender-status',
-          'info',
-          'Defender status is Windows-only',
-          'Microsoft Defender status reads currently rely on Windows-specific PowerShell cmdlets and are unavailable on this platform.',
-          ['Current platform is not Windows.'],
-          'Run Sovereign on Windows 11 to read Defender status from the local system.'
-        ),
-        createEvent(
-          'firewall-status',
-          'info',
-          'Firewall status is Windows-only',
-          'Windows Firewall profile reads currently rely on Windows-specific PowerShell cmdlets and are unavailable on this platform.',
-          ['Current platform is not Windows.'],
-          'Run Sovereign on Windows 11 to read local firewall profile status.'
-        )
+        createWatchdogEvent({
+          source: 'defender-status',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Defender status is Windows-only',
+          description:
+            'Microsoft Defender status reads currently rely on Windows-specific PowerShell cmdlets and are unavailable on this platform.',
+          rationale:
+            'The Defender status provider uses Windows-specific PowerShell cmdlets.',
+          whyThisMatters:
+            'Sovereign surfaces this platform limit directly instead of implying unsupported coverage.',
+          evidence: ['Current platform is not Windows.'],
+          recommendedAction:
+            'Run Sovereign on Windows 11 to read Defender status from the local system.'
+        }),
+        createWatchdogEvent({
+          source: 'firewall-status',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Firewall status is Windows-only',
+          description:
+            'Windows Firewall profile reads currently rely on Windows-specific PowerShell cmdlets and are unavailable on this platform.',
+          rationale:
+            'The firewall status provider uses Windows-specific PowerShell cmdlets.',
+          whyThisMatters:
+            'Sovereign surfaces this platform limit directly instead of implying unsupported coverage.',
+          evidence: ['Current platform is not Windows.'],
+          recommendedAction: 'Run Sovereign on Windows 11 to read local firewall profile status.'
+        })
       ]);
-      return;
+
+      return {
+        baselineItemCount: 0,
+        note: 'Defender and firewall status reads are only available on Windows.'
+      };
     }
 
     try {
       this.currentSnapshot = await this.provider.read();
       await this.publish(this.createEvents(this.currentSnapshot, false));
+
+      return {
+        baselineItemCount: this.currentSnapshot.firewallProfiles.length + (this.currentSnapshot.defender ? 1 : 0),
+        note: 'Re-checking Defender and firewall status on an interval.'
+      };
     } catch (error) {
       await this.publish(
-        createEvent(
-          'defender-status',
-          'info',
-          'Security status could not be read',
-          'The watchdog could not read Defender or firewall status from the current Windows sources.',
-          [error instanceof Error ? error.message : 'Unknown security status error.'],
-          'Compare with Windows Security and Windows Defender Firewall if current protection state matters.'
-        )
+        createWatchdogEvent({
+          source: 'defender-status',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Security status could not be read',
+          description:
+            'Sovereign could not read Defender or firewall status from the current Windows sources.',
+          rationale:
+            'The Windows security status provider failed during initialization.',
+          whyThisMatters:
+            'If the security snapshot is unavailable, posture guidance is limited until the next successful refresh.',
+          evidence: [error instanceof Error ? error.message : 'Unknown security status error.'],
+          recommendedAction:
+            'Compare with Windows Security and Windows Defender Firewall if current protection state matters.'
+        })
       );
+
+      return {
+        baselineItemCount: 0,
+        note: 'Initial security status check failed. The monitor will retry.'
+      };
     }
   }
 
@@ -321,14 +422,23 @@ export class SecurityMonitor implements WatchdogMonitor {
       this.reportedFailure = true;
 
       await this.publish(
-        createEvent(
-          'defender-status',
-          'info',
-          'Security status refresh missed a polling cycle',
-          'The watchdog could not refresh Defender or firewall status for one interval.',
-          [error instanceof Error ? error.message : 'Unknown security polling error.'],
-          'The monitor will retry automatically. Use Windows Security if you need an immediate answer.'
-        )
+        createWatchdogEvent({
+          source: 'defender-status',
+          category: 'security',
+          severity: 'info',
+          kind: 'status',
+          confidence: 'low',
+          title: 'Security status refresh missed a polling cycle',
+          description:
+            'Sovereign could not refresh Defender or firewall status for one interval.',
+          rationale:
+            'The security status provider failed during the current polling window.',
+          whyThisMatters:
+            'A missed cycle reduces confidence in the freshness of the current protection snapshot.',
+          evidence: [error instanceof Error ? error.message : 'Unknown security polling error.'],
+          recommendedAction:
+            'The monitor will retry automatically. Use Windows Security if you need an immediate answer.'
+        })
       );
     }
   }

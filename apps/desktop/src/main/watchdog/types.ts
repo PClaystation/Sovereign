@@ -5,10 +5,15 @@ import type {
 } from '@shared/models';
 
 export interface WatchdogMonitor {
-  initialize(): Promise<void>;
+  initialize(): Promise<WatchdogMonitorInitializationResult | void>;
   start(): void;
   stop(): void;
   refreshNow(): Promise<void>;
+}
+
+export interface WatchdogMonitorInitializationResult {
+  baselineItemCount?: number | null;
+  note?: string | null;
 }
 
 export type EventPublisher = (
@@ -18,6 +23,7 @@ export type EventPublisher = (
 export interface ProcessSnapshot {
   key: string;
   pid: number;
+  parentPid: number | null;
   name: string;
   path: string | null;
   command: string | null;

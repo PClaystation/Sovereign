@@ -5,6 +5,7 @@ import type {
   FixActionResult,
   ProcessInfo,
   ServiceSummary,
+  StartupBackupSummary,
   StartupItem,
   SystemMetricsSnapshot,
   TempCleanupPreview,
@@ -46,6 +47,7 @@ import {
   formatRate,
   formatTemperature
 } from './utils/formatters';
+import { findMatchingSuppression } from './utils/watchdog';
 
 type AppView = 'dashboard' | 'investigate' | 'actions' | 'settings';
 type UtilityActionId = 'flush-dns' | 'restart-explorer' | 'empty-recycle-bin';
@@ -56,6 +58,7 @@ type LoadingState = {
   monitorStatuses: boolean;
   events: boolean;
   startupItems: boolean;
+  startupBackups: boolean;
   services: boolean;
   settings: boolean;
   actionHistory: boolean;
@@ -76,6 +79,13 @@ type ConfirmationState =
       description: string;
       confirmLabel: string;
       startupItem: StartupItem;
+    }
+  | {
+      kind: 'restore-startup-item';
+      title: string;
+      description: string;
+      confirmLabel: string;
+      backup: StartupBackupSummary;
     }
   | {
       kind: 'start-service' | 'stop-service' | 'restart-service';
@@ -186,6 +196,7 @@ const createLoadingState = (): LoadingState => ({
   monitorStatuses: true,
   events: true,
   startupItems: false,
+  startupBackups: false,
   services: false,
   settings: true,
   actionHistory: true,
@@ -211,6 +222,7 @@ export const App = () => {
   const [events, setEvents] = useState<WatchdogEvent[]>([]);
   const [actionHistory, setActionHistory] = useState<FixActionResult[]>([]);
   const [startupItems, setStartupItems] = useState<StartupItem[]>([]);
+  const [startupBackups, setStartupBackups] = useState<StartupBackupSummary[]>([]);
   const [services, setServices] = useState<ServiceSummary[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
@@ -355,6 +367,22 @@ export const App = () => {
     }
   };
 
+  const loadStartupBackups = async (): Promise<void> => {
+    setLoadingState('startupBackups', true);
+
+    try {
+      const nextStartupBackups = await window.sovereign.listStartupBackups();
+      startTransition(() => {
+        setError(null);
+        setStartupBackups(nextStartupBackups);
+      });
+    } catch (cause) {
+      setError(getErrorMessage(cause, 'Unable to load saved startup backups.'));
+    } finally {
+      setLoadingState('startupBackups', false);
+    }
+  };
+
   const loadServices = async (): Promise<void> => {
     setLoadingState('services', true);
 
@@ -404,6 +432,27 @@ export const App = () => {
     setToasts((currentToasts) => [toast, ...currentToasts].slice(0, 4));
     appendActionHistoryResult(result);
     window.setTimeout(() => dismissToast(toast.id), 6_000);
+  };
+
+  const persistSettings = async (
+    nextSettings: AppSettings,
+    successMessage: string
+  ): Promise<AppSettings | null> => {
+    setIsSavingSettings(true);
+    setSettingsSaveError(null);
+    setSettingsSaveMessage(null);
+
+    try {
+      const savedSettings = await window.sovereign.updateSettings(nextSettings);
+      applySettings(savedSettings);
+      setSettingsSaveMessage(successMessage);
+      return savedSettings;
+    } catch (cause) {
+      setSettingsSaveError(getErrorMessage(cause, 'Unable to save the current settings.'));
+      return null;
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   useEffect(() => {
@@ -502,11 +551,17 @@ export const App = () => {
       return;
     }
 
-    if (!loading.startupItems && startupItems.length > 0 && !loading.services && services.length > 0) {
+    if (
+      !loading.startupItems &&
+      !loading.startupBackups &&
+      !loading.services &&
+      (startupItems.length > 0 || startupBackups.length > 0) &&
+      services.length > 0
+    ) {
       return;
     }
 
-    void Promise.allSettled([loadStartupItems(), loadServices()]);
+    void Promise.allSettled([loadStartupItems(), loadStartupBackups(), loadServices()]);
   }, [activeView]);
 
   const handleOpenProcessLocation = async (processInfo: ProcessInfo): Promise<void> => {
@@ -543,7 +598,13 @@ export const App = () => {
 
     try {
       pushToast(await window.sovereign.refreshDiagnostics());
-      await Promise.all([loadSnapshot(), loadEvents(), loadStartupItems(), loadServices()]);
+      await Promise.all([
+        loadSnapshot(),
+        loadEvents(),
+        loadStartupItems(),
+        loadStartupBackups(),
+        loadServices()
+      ]);
     } catch (cause) {
       setError(getErrorMessage(cause, 'Unable to refresh diagnostics right now.'));
     } finally {
@@ -556,7 +617,13 @@ export const App = () => {
 
     try {
       pushToast(await window.sovereign.runUtilityAction({ action }));
-      await Promise.allSettled([loadSnapshot(), loadEvents(), loadStartupItems(), loadServices()]);
+      await Promise.allSettled([
+        loadSnapshot(),
+        loadEvents(),
+        loadStartupItems(),
+        loadStartupBackups(),
+        loadServices()
+      ]);
     } catch (cause) {
       setError(getErrorMessage(cause, 'Unable to complete the requested utility action.'));
     } finally {
@@ -597,19 +664,89 @@ export const App = () => {
       return;
     }
 
-    setIsSavingSettings(true);
-    setSettingsSaveError(null);
-    setSettingsSaveMessage(null);
-
     try {
-      const nextSettings = await window.sovereign.updateSettings(settingsDraft);
-      applySettings(nextSettings);
-      setSettingsSaveMessage('Settings saved. Live summaries and watchdog polling were refreshed.');
+      const nextSettings = await persistSettings(
+        settingsDraft,
+        'Settings saved. Live summaries and watchdog polling were refreshed.'
+      );
+
+      if (!nextSettings) {
+        return;
+      }
+
       await Promise.all([loadSnapshot(), loadEvents()]);
     } catch (cause) {
       setSettingsSaveError(getErrorMessage(cause, 'Unable to save the current settings.'));
-    } finally {
-      setIsSavingSettings(false);
+    }
+  };
+
+  const handleSuppressEvent = async (event: WatchdogEvent): Promise<void> => {
+    const baseSettings = settingsDraft || settings;
+
+    if (!baseSettings) {
+      return;
+    }
+
+    const suppressionValue = event.subjectPath || event.fingerprint;
+    const suppressionKind = event.subjectPath ? 'path' : 'fingerprint';
+    const alreadySuppressed = findMatchingSuppression(event, baseSettings.watchdog.suppressions);
+
+    if (alreadySuppressed || !suppressionValue) {
+      return;
+    }
+
+    const nextSettings: AppSettings = {
+      ...baseSettings,
+      watchdog: {
+        ...baseSettings.watchdog,
+        suppressions: [
+          {
+            id: window.crypto.randomUUID(),
+            kind: suppressionKind,
+            value: suppressionValue,
+            label: event.subjectName || event.title,
+            source: event.source,
+            createdAt: new Date().toISOString()
+          },
+          ...baseSettings.watchdog.suppressions
+        ]
+      }
+    };
+
+    const savedSettings = await persistSettings(
+      nextSettings,
+      'Suppression saved. Matching future events will be hidden unless you show suppressed items.'
+    );
+
+    if (savedSettings) {
+      await loadEvents();
+    }
+  };
+
+  const handleRemoveSuppression = async (suppressionId: string): Promise<void> => {
+    const baseSettings = settingsDraft || settings;
+
+    if (!baseSettings) {
+      return;
+    }
+
+    const nextSettings: AppSettings = {
+      ...baseSettings,
+      watchdog: {
+        ...baseSettings.watchdog,
+        suppressions: baseSettings.watchdog.suppressions.filter(
+          (suppression) => suppression.id !== suppressionId
+        )
+      }
+    };
+
+    const savedSettings = await persistSettings(
+      nextSettings,
+      'Suppression removed. Matching events will be visible again.'
+    );
+
+    if (savedSettings) {
+      await loadEvents();
     }
   };
 
@@ -633,7 +770,12 @@ export const App = () => {
         result = await window.sovereign.disableStartupItem({
           startupItemId: confirmation.startupItem.id
         });
-        await Promise.all([loadStartupItems(), loadEvents()]);
+        await Promise.all([loadStartupItems(), loadStartupBackups(), loadEvents()]);
+      } else if (confirmation.kind === 'restore-startup-item') {
+        result = await window.sovereign.restoreStartupItem({
+          backupId: confirmation.backup.id
+        });
+        await Promise.all([loadStartupItems(), loadStartupBackups(), loadEvents()]);
       } else if (confirmation.kind === 'start-service') {
         result = await window.sovereign.startService({
           serviceName: confirmation.service.name,
@@ -663,7 +805,13 @@ export const App = () => {
         await loadSnapshot();
       } else if (confirmation.kind === 'utility-action') {
         result = await window.sovereign.runUtilityAction({ action: confirmation.action });
-        await Promise.allSettled([loadSnapshot(), loadEvents(), loadStartupItems(), loadServices()]);
+        await Promise.allSettled([
+          loadSnapshot(),
+          loadEvents(),
+          loadStartupItems(),
+          loadStartupBackups(),
+          loadServices()
+        ]);
       } else {
         return;
       }
@@ -702,6 +850,17 @@ export const App = () => {
     )
     .slice(0, 10);
 
+  const filteredStartupBackups = startupBackups
+    .filter((backup) =>
+      deferredStartupSearch
+        ? matchesSearch(
+            [backup.name, backup.location, backup.command, backup.sourceType].join(' '),
+            deferredStartupSearch
+          )
+        : true
+    )
+    .slice(0, 10);
+
   const filteredServices = services
     .filter((service) =>
       deferredServiceSearch
@@ -713,9 +872,13 @@ export const App = () => {
     )
     .slice(0, 10);
 
+  const visibleEvents = settings?.watchdog.showSuppressedEvents
+    ? events
+    : events.filter((event) => !findMatchingSuppression(event, settings?.watchdog.suppressions || []));
+  const hiddenSuppressedCount = events.length - visibleEvents.length;
   const postureInsight = derivePostureInsight(
     snapshot,
-    events,
+    visibleEvents,
     monitorStatuses,
     actionHistory
   );
@@ -743,14 +906,17 @@ export const App = () => {
   const networkUsagePercent = snapshot
     ? Math.min((snapshot.network.totalBytesPerSec / networkGaugeMax) * 100, 100)
     : 0;
-  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? events[0] ?? null;
+  const selectedEvent =
+    visibleEvents.find((event) => event.id === selectedEventId) ?? visibleEvents[0] ?? null;
   const selectedProcess =
     filteredProcesses.find((process) => process.pid === selectedProcessPid) ??
     filteredProcesses[0] ??
     null;
   const busiestNetworkInterface = snapshot?.network.interfaces[0] ?? null;
-  const suspiciousEventCount = events.filter((event) => event.severity === 'suspicious').length;
-  const unusualEventCount = events.filter((event) => event.severity === 'unusual').length;
+  const suspiciousEventCount = visibleEvents.filter(
+    (event) => event.severity === 'suspicious'
+  ).length;
+  const unusualEventCount = visibleEvents.filter((event) => event.severity === 'unusual').length;
   const enabledMonitorCount = settings ? Object.values(settings.monitors).filter(Boolean).length : 0;
   const hasUnsavedSettings = serializeSettings(settingsDraft) !== serializeSettings(settings);
   const actionsDisabled = Boolean(busyActionKey) || isSavingSettings;
@@ -758,6 +924,10 @@ export const App = () => {
     (status) => status.state === 'degraded'
   ).length;
   const failedActionCount = actionHistory.filter((result) => !result.success).length;
+  const selectedEventSuppression =
+    selectedEvent && settings
+      ? findMatchingSuppression(selectedEvent, settings.watchdog.suppressions)
+      : null;
   const cpuDetailParts = snapshot
     ? [
         `${snapshot.cpu.coreCount} logical cores`,
@@ -827,8 +997,11 @@ export const App = () => {
             },
             {
               label: 'Visible events',
-              value: formatCount(events.length),
-              detail: `${suspiciousEventCount} suspicious, ${unusualEventCount} unusual`
+              value: formatCount(visibleEvents.length),
+              detail:
+                hiddenSuppressedCount > 0
+                  ? `${hiddenSuppressedCount} hidden by suppressions`
+                  : `${suspiciousEventCount} suspicious, ${unusualEventCount} unusual`
             },
             {
               label: 'Selected focus',
@@ -853,7 +1026,10 @@ export const App = () => {
               {
                 label: 'Startup inventory',
                 value: formatCount(startupItems.length),
-                detail: filteredStartupItems.length ? `${filteredStartupItems.length} shown after filtering` : 'No startup items currently visible'
+                detail:
+                  filteredStartupItems.length || filteredStartupBackups.length
+                    ? `${filteredStartupItems.length} active, ${filteredStartupBackups.length} restorable shown`
+                    : 'No startup items currently visible'
               },
               {
                 label: 'Service inventory',
@@ -956,7 +1132,7 @@ export const App = () => {
       </section>
 
       <section className="analytics-grid">
-        <SystemStatisticsPanel snapshot={snapshot} events={events} />
+        <SystemStatisticsPanel snapshot={snapshot} events={visibleEvents} />
         <ActionHistoryPanel
           history={actionHistory}
           isLoading={loading.actionHistory}
@@ -1029,14 +1205,34 @@ export const App = () => {
             onSearchChange={setEventSearch}
           />
           <EventTimeline
-            events={events}
+            events={visibleEvents}
             selectedEventId={selectedEvent?.id || null}
             isLoading={loading.events}
-            emptyMessage="No events match the current filters."
+            emptyMessage={
+              hiddenSuppressedCount > 0
+                ? `No visible events match the current filters. ${hiddenSuppressedCount} event${hiddenSuppressedCount === 1 ? '' : 's'} ${hiddenSuppressedCount === 1 ? 'is' : 'are'} hidden by suppressions.`
+                : 'No events match the current filters.'
+            }
             onSelectEvent={setSelectedEventId}
           />
         </section>
-        <EventDetailPanel event={selectedEvent} />
+        <EventDetailPanel
+          event={selectedEvent}
+          suppressionLabel={selectedEventSuppression?.label || null}
+          actionsDisabled={actionsDisabled}
+          onSuppress={
+            selectedEventSuppression
+              ? undefined
+              : selectedEvent
+                ? () => { void handleSuppressEvent(selectedEvent); }
+                : undefined
+          }
+          onRemoveSuppression={
+            selectedEventSuppression
+              ? () => { void handleRemoveSuppression(selectedEventSuppression.id); }
+              : undefined
+          }
+        />
       </div>
     </section>
   );
@@ -1081,8 +1277,9 @@ export const App = () => {
 
         <StartupItemsPanel
           items={filteredStartupItems}
+          backups={filteredStartupBackups}
           searchValue={startupSearch}
-          isLoading={loading.startupItems}
+          isLoading={loading.startupItems || loading.startupBackups}
           actionsDisabled={actionsDisabled}
           platform={snapshot?.platform || null}
           onSearchChange={setStartupSearch}
@@ -1093,6 +1290,15 @@ export const App = () => {
               description: 'This removes the selected startup entry from the active startup path. Sovereign records backup metadata locally so the change can be traced later.',
               confirmLabel: 'Disable startup item',
               startupItem
+            });
+          }}
+          onRestore={(backup) => {
+            setConfirmation({
+              kind: 'restore-startup-item',
+              title: `Restore startup item: ${backup.name}`,
+              description: 'This restores the saved startup backup that Sovereign recorded earlier. Continue only if you want this item to launch at startup again.',
+              confirmLabel: 'Restore startup item',
+              backup
             });
           }}
         />
@@ -1259,6 +1465,7 @@ export const App = () => {
                     setSettingsSaveMessage(null);
                     setSettingsSaveError(null);
                   }}
+                  onRemoveSuppression={(suppressionId) => { void handleRemoveSuppression(suppressionId); }}
                   onSave={() => { void handleSaveSettings(); }}
                   onReset={() => {
                     setSettingsDraft(cloneSettings(DEFAULT_APP_SETTINGS));

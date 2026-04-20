@@ -8,6 +8,7 @@ import type {
   FixActionResult,
   ProcessInfo,
   ServiceSummary,
+  StartupBackupSummary,
   StartupItem,
   TempCleanupPreview
 } from '@shared/models';
@@ -18,6 +19,7 @@ import type {
   ListActionHistoryRequest,
   OpenProcessLocationRequest,
   RunUtilityActionRequest,
+  RestoreStartupItemRequest,
   StartServiceRequest,
   StopServiceRequest,
   RestartServiceRequest
@@ -164,6 +166,14 @@ export class FixerService {
     return items.sort((leftItem, rightItem) => leftItem.name.localeCompare(rightItem.name));
   }
 
+  async listStartupBackups(): Promise<StartupBackupSummary[]> {
+    if (process.platform !== 'win32') {
+      return [];
+    }
+
+    return this.startupItemsProvider.listBackups(this.getStartupBackupsDirectory());
+  }
+
   async disableStartupItem(
     request: DisableStartupItemRequest
   ): Promise<FixActionResult> {
@@ -198,7 +208,7 @@ export class FixerService {
 
       await this.startupItemsProvider.disable(
         startupItem,
-        path.join(app.getPath('userData'), 'startup-backups')
+        this.getStartupBackupsDirectory()
       );
       await this.dependencies.watchdogService.refreshNow();
 
@@ -217,6 +227,43 @@ export class FixerService {
         false,
         'Could not disable the selected startup item',
         [error instanceof Error ? error.message : 'Unknown startup action error.']
+      );
+    }
+  }
+
+  async restoreStartupItem(
+    request: RestoreStartupItemRequest
+  ): Promise<FixActionResult> {
+    if (process.platform !== 'win32') {
+      return this.recordResult(
+        createResult('restore-startup-item', false, 'Startup restore is Windows-only', [
+          'Run Sovereign on Windows 11 to restore disabled startup entries.'
+        ])
+      );
+    }
+
+    try {
+      const restoredBackup = await this.startupItemsProvider.restore(
+        request.backupId,
+        this.getStartupBackupsDirectory()
+      );
+      await this.dependencies.watchdogService.refreshNow();
+
+      return this.recordResult(
+        'restore-startup-item',
+        true,
+        `Restored startup item: ${restoredBackup.name}`,
+        [
+          `Source: ${restoredBackup.location}`,
+          'Sovereign restored the saved startup backup and removed it from the local backup inventory.'
+        ]
+      );
+    } catch (error) {
+      return this.recordResult(
+        'restore-startup-item',
+        false,
+        'Could not restore the selected startup item',
+        [error instanceof Error ? error.message : 'Unknown startup restore error.']
       );
     }
   }
@@ -492,5 +539,9 @@ export class FixerService {
 
     this.listeners.forEach((listener) => listener(result));
     return result;
+  }
+
+  private getStartupBackupsDirectory(): string {
+    return path.join(app.getPath('userData'), 'startup-backups');
   }
 }

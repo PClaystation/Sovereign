@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {
+  access,
   copyFile,
   mkdir,
   readFile,
@@ -8,6 +9,7 @@ import {
   writeFile
 } from 'node:fs/promises';
 
+import type { StartupBackupSummary } from '@shared/models';
 import type { StartupItemRecord } from '@main/watchdog/types';
 import { buildKey } from '@main/watchdog/helpers';
 
@@ -31,6 +33,7 @@ interface RawStartupItem {
 
 interface StartupBackupRecord {
   id: string;
+  startupItemId?: string;
   name: string;
   command: string;
   location: string;
@@ -155,6 +158,19 @@ const readBackupManifest = async (
   }
 };
 
+const fileExists = async (candidatePath: string | null): Promise<boolean> => {
+  if (!candidatePath) {
+    return false;
+  }
+
+  try {
+    await access(candidatePath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const writeBackupManifest = async (
   backupsDirectory: string,
   backups: StartupBackupRecord[]
@@ -239,7 +255,8 @@ Remove-ItemProperty -Path $path -Name $valueName -ErrorAction Stop
 
     const backups = await readBackupManifest(backupsDirectory);
     backups.push({
-      id: item.id,
+      id: buildKey(item.id, Date.now()),
+      startupItemId: item.id,
       name: item.name,
       command: item.command,
       location: item.location,
@@ -275,7 +292,8 @@ Remove-ItemProperty -Path $path -Name $valueName -ErrorAction Stop
 
     const backups = await readBackupManifest(backupsDirectory);
     backups.push({
-      id: item.id,
+      id: buildKey(item.id, Date.now()),
+      startupItemId: item.id,
       name: item.name,
       command: item.command,
       location: item.location,
@@ -288,5 +306,106 @@ Remove-ItemProperty -Path $path -Name $valueName -ErrorAction Stop
       disabledAt: new Date().toISOString()
     });
     await writeBackupManifest(backupsDirectory, backups);
+  }
+
+  async listBackups(backupsDirectory: string): Promise<StartupBackupSummary[]> {
+    const backups = await readBackupManifest(backupsDirectory);
+
+    return Promise.all(
+      backups
+        .slice()
+        .sort((left, right) => Date.parse(right.disabledAt) - Date.parse(left.disabledAt))
+        .map(async (backup) => {
+          const canRestore =
+            backup.sourceType === 'registry'
+              ? Boolean(backup.registryHive && backup.registryPath && backup.valueName)
+              : Boolean(backup.filePath && backup.backupPath && (await fileExists(backup.backupPath)));
+
+          return {
+            id: backup.id,
+            startupItemId: backup.startupItemId || backup.id,
+            name: backup.name,
+            command: backup.command,
+            location: backup.location,
+            sourceType: backup.sourceType,
+            disabledAt: backup.disabledAt,
+            backupPath: backup.backupPath,
+            canRestore,
+            restoreSupportReason: canRestore
+              ? null
+              : backup.sourceType === 'registry'
+                ? 'The saved registry metadata is incomplete.'
+                : 'The saved startup-folder backup file is no longer available.'
+          };
+        })
+    );
+  }
+
+  async restore(
+    backupId: string,
+    backupsDirectory: string
+  ): Promise<StartupBackupSummary> {
+    const backups = await readBackupManifest(backupsDirectory);
+    const backup = backups.find((candidate) => candidate.id === backupId);
+
+    if (!backup) {
+      throw new Error('The saved startup-item backup no longer exists.');
+    }
+
+    if (backup.sourceType === 'registry') {
+      await this.restoreRegistryItem(backup);
+    } else {
+      await this.restoreStartupFolderItem(backup);
+    }
+
+    await writeBackupManifest(
+      backupsDirectory,
+      backups.filter((candidate) => candidate.id !== backupId)
+    );
+
+    return {
+      id: backup.id,
+      startupItemId: backup.startupItemId || backup.id,
+      name: backup.name,
+      command: backup.command,
+      location: backup.location,
+      sourceType: backup.sourceType,
+      disabledAt: backup.disabledAt,
+      backupPath: backup.backupPath,
+      canRestore: true,
+      restoreSupportReason: null
+    };
+  }
+
+  private async restoreRegistryItem(backup: StartupBackupRecord): Promise<void> {
+    if (!backup.registryHive || !backup.registryPath || !backup.valueName) {
+      throw new Error('Registry backup metadata is incomplete.');
+    }
+
+    const registryPath = `${backup.registryHive}:\\${backup.registryPath}`;
+    const command = `
+$path = ${escapePowerShellString(registryPath)}
+$valueName = ${escapePowerShellString(backup.valueName)}
+$value = ${escapePowerShellString(backup.command)}
+if (-not (Test-Path $path)) {
+  New-Item -Path $path -Force | Out-Null
+}
+Set-ItemProperty -Path $path -Name $valueName -Value $value -Type String -ErrorAction Stop
+`;
+
+    await runPowerShellText(command);
+  }
+
+  private async restoreStartupFolderItem(backup: StartupBackupRecord): Promise<void> {
+    if (!backup.filePath || !backup.backupPath) {
+      throw new Error('Startup-folder backup metadata is incomplete.');
+    }
+
+    if (!(await fileExists(backup.backupPath))) {
+      throw new Error('The saved backup file is no longer available.');
+    }
+
+    await mkdir(path.dirname(backup.filePath), { recursive: true });
+    await moveFileToBackup(backup.backupPath, backup.filePath);
   }
 }

@@ -3,6 +3,8 @@ import type { WatchdogEvent } from '@shared/models';
 import { formatClock, formatRelativeTime } from '../utils/formatters';
 import {
   WATCHDOG_CATEGORY_LABELS,
+  WATCHDOG_CONFIDENCE_LABELS,
+  WATCHDOG_KIND_LABELS,
   WATCHDOG_SOURCE_LABELS
 } from '../utils/watchdog';
 
@@ -47,10 +49,15 @@ export const EventTimeline = ({
             <span className="timeline-category">
               {WATCHDOG_CATEGORY_LABELS[event.category]}
             </span>
+            <span className="timeline-category">{WATCHDOG_KIND_LABELS[event.kind]}</span>
           </div>
 
           <h3>{event.title}</h3>
           <p>{event.description}</p>
+          <p className="timeline-action">
+            {WATCHDOG_CONFIDENCE_LABELS[event.confidence]}
+            {event.occurrenceCount > 1 ? ` · Seen ${event.occurrenceCount} times` : ''}
+          </p>
           <p className="timeline-action">{event.recommendedAction}</p>
         </button>
       ))

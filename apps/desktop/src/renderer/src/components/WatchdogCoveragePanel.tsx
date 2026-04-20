@@ -72,11 +72,24 @@ export const WatchdogCoveragePanel = ({
                 <strong>{formatRelativeTime(status.lastEventAt)}</strong>
               </div>
               <div className="coverage-stat">
+                <span>Baseline</span>
+                <strong>
+                  {status.baselineCapturedAt
+                    ? `${formatRelativeTime(status.baselineCapturedAt)}${
+                        status.baselineItemCount != null
+                          ? ` · ${status.baselineItemCount} items`
+                          : ''
+                      }`
+                    : 'Pending'}
+                </strong>
+              </div>
+              <div className="coverage-stat">
                 <span>Events recorded</span>
                 <strong>{status.eventCount}</strong>
               </div>
             </div>
 
+            {status.note ? <p className="panel-meta">{status.note}</p> : null}
             {status.lastError ? (
               <p className="coverage-error">{status.lastError}</p>
             ) : null}

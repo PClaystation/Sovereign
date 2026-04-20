@@ -9,6 +9,7 @@ import type {
   ListActionHistoryRequest,
   OpenProcessLocationRequest,
   RunUtilityActionRequest,
+  RestoreStartupItemRequest,
   StartServiceRequest,
   StopServiceRequest,
   RestartServiceRequest,
@@ -41,7 +42,9 @@ const HANDLED_CHANNELS = [
   IPC_CHANNELS.fixer.killProcess,
   IPC_CHANNELS.fixer.openProcessLocation,
   IPC_CHANNELS.fixer.listStartupItems,
+  IPC_CHANNELS.fixer.listStartupBackups,
   IPC_CHANNELS.fixer.disableStartupItem,
+  IPC_CHANNELS.fixer.restoreStartupItem,
   IPC_CHANNELS.fixer.listServices,
   IPC_CHANNELS.fixer.startService,
   IPC_CHANNELS.fixer.stopService,
@@ -116,10 +119,20 @@ export const registerIpcHandlers = ({
     fixerService.listStartupItems()
   );
 
+  ipcMain.handle(IPC_CHANNELS.fixer.listStartupBackups, async () =>
+    fixerService.listStartupBackups()
+  );
+
   ipcMain.handle(
     IPC_CHANNELS.fixer.disableStartupItem,
     async (_event, request: DisableStartupItemRequest) =>
       fixerService.disableStartupItem(request)
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.fixer.restoreStartupItem,
+    async (_event, request: RestoreStartupItemRequest) =>
+      fixerService.restoreStartupItem(request)
   );
 
   ipcMain.handle(IPC_CHANNELS.fixer.listServices, async () =>
