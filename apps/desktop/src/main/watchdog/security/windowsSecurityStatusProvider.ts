@@ -131,7 +131,9 @@ export class WindowsSecurityStatusProvider {
 
     return {
       defender: mapDefenderStatus(rawPayload?.Defender),
+      gatekeeper: null,
       firewallProfiles: mapFirewallProfiles(rawPayload?.FirewallProfiles),
+      applicationFirewall: null,
       checkedAt: new Date().toISOString()
     };
   }

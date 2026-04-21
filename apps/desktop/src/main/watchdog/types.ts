@@ -64,8 +64,24 @@ export interface FirewallProfileSnapshot {
   error: string | null;
 }
 
+export interface GatekeeperStatusSnapshot {
+  available: boolean;
+  assessmentsEnabled: boolean | null;
+  error: string | null;
+}
+
+export interface ApplicationFirewallSnapshot {
+  available: boolean;
+  enabled: boolean | null;
+  stealthModeEnabled: boolean | null;
+  blockAllIncomingEnabled: boolean | null;
+  error: string | null;
+}
+
 export interface SecurityStatusSnapshot {
   defender: DefenderStatusSnapshot | null;
+  gatekeeper: GatekeeperStatusSnapshot | null;
   firewallProfiles: FirewallProfileSnapshot[];
+  applicationFirewall: ApplicationFirewallSnapshot | null;
   checkedAt: string;
 }

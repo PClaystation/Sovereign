@@ -1,12 +1,13 @@
 import { runPowerShellText } from '@main/watchdog/windows/runPowerShell';
+import type { RunUtilityActionRequest } from '@shared/ipc';
 
-export type WindowsUtilityAction =
-  | 'flush-dns'
-  | 'restart-explorer'
-  | 'empty-recycle-bin';
+export type WindowsUtilityAction = Extract<
+  RunUtilityActionRequest['action'],
+  'flush-dns' | 'restart-explorer' | 'empty-recycle-bin'
+>;
 
 export class WindowsUtilityActionsProvider {
-  async run(action: WindowsUtilityAction): Promise<void> {
+  async run(action: RunUtilityActionRequest['action']): Promise<void> {
     if (action === 'flush-dns') {
       await runPowerShellText('Clear-DnsClientCache -ErrorAction Stop');
       return;
@@ -17,6 +18,10 @@ export class WindowsUtilityActionsProvider {
         '$explorer = Get-Process explorer -ErrorAction SilentlyContinue; if ($explorer) { Stop-Process -Name explorer -Force -ErrorAction Stop }; Start-Process explorer.exe'
       );
       return;
+    }
+
+    if (action !== 'empty-recycle-bin') {
+      throw new Error(`Unsupported Windows utility action: ${action}`);
     }
 
     await runPowerShellText('Clear-RecycleBin -Force -ErrorAction Stop');

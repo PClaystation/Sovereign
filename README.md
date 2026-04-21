@@ -14,7 +14,7 @@ This milestone stays inside the safety boundaries from `AGENTS.md`:
 
 The current app includes:
 
-- a modern dashboard shell built for Windows 11-style desktop use
+- a modern dashboard shell built for desktop use on Windows and macOS
 - live CPU, memory, disk, and network summary cards
 - a synthesized posture overview with a score, dominant pressure summary, and recommended next steps
 - a system profile panel for device, OS, kernel, CPU, memory, and last-boot context
@@ -24,9 +24,10 @@ The current app includes:
 - a top processes table fed from the main-process telemetry service
 - process-path badges in the triage table for temp, Downloads, and AppData-style launches
 - process launch monitoring with explainable path heuristics for temp, Downloads, and AppData-style locations
-- startup item inventory and change detection on Windows
+- startup item inventory and change detection on Windows and macOS
 - scheduled task summaries and change detection on Windows when readable
 - Defender and firewall status reads on Windows when readable
+- Gatekeeper and Application Firewall status reads on macOS when readable
 - a watchdog coverage panel that surfaces active, degraded, disabled, and unsupported monitor states
 - per-monitor baseline capture details so empty watchdog views are explained instead of backfilled with fake events
 - a filterable recent-events timeline and event detail panel with evidence and recommended action
@@ -39,7 +40,8 @@ The current app includes:
 - a live refresh-interval control that actually reconfigures dashboard polling after save
 - safe temp cleanup with preview-first execution
 - explicit process actions for opening file locations and ending processes
-- explicit Windows service restart controls
+- explicit Windows service controls plus macOS LaunchAgent controls
+- platform-aware quick actions for DNS flush, shell restart, and recycle-bin / Trash cleanup
 - explicit startup item disable controls
 - explicit startup item restore controls using local backup records
 - a manual diagnostics refresh that re-polls both telemetry and watchdog providers
@@ -125,6 +127,14 @@ npm run package:win
 
 This runs the production build and asks `electron-builder` to generate a Windows NSIS installer. Packaging is intended to be executed on Windows for the cleanest result.
 
+## macOS packaging
+
+```bash
+npm run package:mac
+```
+
+This runs the production build and asks `electron-builder` to generate macOS DMG and ZIP artifacts for the current host architecture.
+
 ## Architecture overview
 
 ### Main process
@@ -135,7 +145,7 @@ This runs the production build and asks `electron-builder` to generate a Windows
 - `src/main/platform` contains platform adapters for system telemetry collection.
 - `src/main/services/dashboardService.ts` refreshes live snapshots on a timer, maintains a short rolling sample history for graphs, applies settings-backed thresholds to health summaries, and now reconfigures its timer when the saved refresh interval changes.
 - `src/main/store` contains the local event/settings/action-history store abstractions and the SQLite-backed implementation used by the current build.
-- `src/main/watchdog` contains explainable monitors and Windows command providers for watchdog reads, plus runtime coverage state for each feed.
+- `src/main/watchdog` contains explainable monitors and platform-specific command providers for watchdog reads, plus runtime coverage state for each feed.
 - `src/main/ipc/registerIpc.ts` wires typed IPC handlers to services.
 
 ### Shared contracts
@@ -155,15 +165,17 @@ The current build uses a SQLite-backed local store in the Electron main process.
 
 ## Notes and current limitations
 
-- Windows is the product target, but the app still includes non-Windows fallbacks so development can run on macOS and Linux. Windows-only watchdog sources emit transparent informational events when they are unavailable off-platform.
+- Windows remains the primary product target, but the current build now supports a substantial macOS user-space profile for startup visibility, LaunchAgent control, and platform security reads. Linux still runs in a limited fallback profile.
 - Startup item monitoring currently uses `Win32_StartupCommand`, which may not expose every disabled startup entry.
+- macOS startup item monitoring reads visible LaunchAgents and LaunchDaemons plist files. Only user LaunchAgents are directly controllable; system LaunchDaemons remain read-only.
 - Startup item disable is only implemented for inventory sources that Sovereign can trace explicitly. Permission failures are surfaced instead of bypassed.
 - Startup item restore only covers entries that Sovereign itself previously disabled and recorded in its local backup manifest.
 - Scheduled task summaries rely on `Get-ScheduledTask` and `Get-ScheduledTaskInfo`; some environments can limit or hide task details.
-- Defender and firewall reads rely on local PowerShell cmdlets. If those cmdlets are unavailable or a different security product replaces Defender, Sovereign reports that limitation instead of pretending to know more.
-- Severity is heuristic, not authoritative. Temp, Downloads, and AppData path matches are intentionally explainable signals, not proof of malicious behavior.
+- Defender and firewall reads rely on local PowerShell cmdlets on Windows. On macOS, Gatekeeper and Application Firewall reads rely on standard `spctl` and `socketfilterfw` command surfaces. If those sources are unavailable, Sovereign reports that limitation instead of pretending to know more.
+- macOS service controls currently target user LaunchAgents through `launchctl`; they do not try to manage privileged system daemons.
+- Severity is heuristic, not authoritative. Temp, Downloads, AppData, and macOS user application-data path matches are intentionally explainable signals, not proof of malicious behavior.
 - File-trust metadata relies on local Authenticode and version-info reads. Missing publisher or signature data should be treated as a transparency limit, not an automatic verdict.
 - Temp cleanup only targets previewed top-level items in the current user temp root and skips newer files by design.
-- Process termination, service restart, and startup disable can still fail because of Windows permissions or active file/service locks; those failures are returned directly to the UI.
-- Monitor runtime status reflects what Sovereign itself could initialize or refresh during the current app session. It is not an independent guarantee that every Windows source is healthy outside the app.
-- The current settings page controls thresholds, monitor toggles, and suppressions, but it does not yet expose scheduled-task tuning, signer allowlists, or Windows-specific exclusion lists.
+- Process termination, service restart, and startup disable can still fail because of OS permissions, active file/service locks, or `launchctl` restrictions; those failures are returned directly to the UI.
+- Monitor runtime status reflects what Sovereign itself could initialize or refresh during the current app session. It is not an independent guarantee that every Windows or macOS source is healthy outside the app.
+- The current settings page controls thresholds, monitor toggles, and suppressions, but it does not yet expose scheduled-task tuning, signer allowlists, or platform-specific exclusion lists.

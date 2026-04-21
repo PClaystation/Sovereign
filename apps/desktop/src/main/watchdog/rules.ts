@@ -52,16 +52,18 @@ const PATH_RULES: PathRule[] = [
   },
   {
     id: 'appdata',
-    label: 'AppData path',
+    label: 'User app data path',
     severity: 'unusual',
     confidence: 'medium',
     matches: (candidate) =>
       candidate.includes('/appdata/local/') ||
-      candidate.includes('/appdata/roaming/'),
+      candidate.includes('/appdata/roaming/') ||
+      candidate.includes('/library/application support/') ||
+      candidate.includes('/library/containers/'),
     evidence:
-      'Executable path points into AppData, a user-writable location that many installers use and some unwanted software abuses.',
+      'Executable path points into a user application-data location, which many installers use and some unwanted software abuses.',
     whyThisMatters:
-      'AppData is heavily used by legitimate software, but it is also a common place for persistence and user-space abuse because normal users can write there.',
+      'User application-data folders are heavily used by legitimate software, but they are also common places for persistence and user-space abuse because normal users can write there.',
     recommendedAction:
       'Validate that the program is expected, especially if it also persists at startup.'
   }

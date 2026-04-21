@@ -50,7 +50,12 @@ import {
 import { findMatchingSuppression } from './utils/watchdog';
 
 type AppView = 'dashboard' | 'investigate' | 'actions' | 'settings';
-type UtilityActionId = 'flush-dns' | 'restart-explorer' | 'empty-recycle-bin';
+type UtilityActionId =
+  | 'flush-dns'
+  | 'restart-explorer'
+  | 'empty-recycle-bin'
+  | 'restart-finder'
+  | 'empty-trash';
 type QuickActionId = 'refresh-diagnostics' | 'preview-temp-cleanup' | UtilityActionId;
 
 type LoadingState = {
@@ -111,7 +116,7 @@ type ConfirmationState =
 
 const PLATFORM_LABELS: Record<SystemMetricsSnapshot['platform'], string> = {
   windows: 'Windows 11 user-space profile',
-  macos: 'macOS fallback profile',
+  macos: 'macOS user-space profile',
   linux: 'Linux fallback profile',
   unknown: 'Generic fallback profile'
 };
@@ -136,7 +141,7 @@ const VIEW_COPY: Record<AppView, { title: string; description: string; helper: s
     description:
       'Run quick recovery tasks and targeted control actions instead of just observing the machine.',
     helper:
-      'All actions remain user-invoked, visible, and explicit about permissions or Windows-side failures.'
+      'All actions remain user-invoked, visible, and explicit about OS-side failures or permission limits.'
   },
   settings: {
     title: 'Thresholds and monitor coverage',
@@ -154,40 +159,79 @@ const NAV_ITEMS: Array<{ id: AppView; label: string; description: string }> = [
   { id: 'settings', label: 'Settings', description: 'Thresholds, toggles, and dashboard preferences' }
 ];
 
-const QUICK_ACTIONS = [
-  {
-    id: 'refresh-diagnostics',
-    title: 'Refresh diagnostics',
-    description: 'Re-poll telemetry, watchdog providers, and inventories now.',
-    detail: 'Useful after making system changes outside the app.'
-  },
-  {
-    id: 'preview-temp-cleanup',
-    title: 'Preview temp cleanup',
-    description: 'Build a safe deletion preview before removing temporary files.',
-    detail: 'Keeps cleanup explicit instead of deleting first and reporting later.'
-  },
-  {
-    id: 'flush-dns',
-    title: 'Flush DNS cache',
-    description: 'Clear the local DNS resolver cache for name-resolution issues.',
-    detail: 'Useful after network changes or stale DNS responses.'
-  },
-  {
-    id: 'restart-explorer',
-    title: 'Restart Explorer',
-    description: 'Restart the Windows shell without rebooting the machine.',
-    detail: 'Useful when the taskbar, desktop, or file shell is misbehaving.',
-    tone: 'caution'
-  },
-  {
-    id: 'empty-recycle-bin',
-    title: 'Empty recycle bin',
-    description: 'Remove currently discarded items using the standard Windows recycle-bin command.',
-    detail: 'Reclaims space, but the deleted contents cannot be restored from the bin.',
-    tone: 'caution'
+const getQuickActions = (
+  platform: SystemMetricsSnapshot['platform'] | null
+) => {
+  const commonActions = [
+    {
+      id: 'refresh-diagnostics',
+      title: 'Refresh diagnostics',
+      description: 'Re-poll telemetry, watchdog providers, and inventories now.',
+      detail: 'Useful after making system changes outside the app.'
+    },
+    {
+      id: 'preview-temp-cleanup',
+      title: 'Preview temp cleanup',
+      description: 'Build a safe deletion preview before removing temporary files.',
+      detail: 'Keeps cleanup explicit instead of deleting first and reporting later.'
+    }
+  ] as const;
+
+  if (platform === 'windows') {
+    return [
+      ...commonActions,
+      {
+        id: 'flush-dns',
+        title: 'Flush DNS cache',
+        description: 'Clear the local DNS resolver cache for name-resolution issues.',
+        detail: 'Useful after network changes or stale DNS responses.'
+      },
+      {
+        id: 'restart-explorer',
+        title: 'Restart Explorer',
+        description: 'Restart the Windows shell without rebooting the machine.',
+        detail: 'Useful when the taskbar, desktop, or file shell is misbehaving.',
+        tone: 'caution'
+      },
+      {
+        id: 'empty-recycle-bin',
+        title: 'Empty recycle bin',
+        description:
+          'Remove currently discarded items using the standard Windows recycle-bin command.',
+        detail: 'Reclaims space, but the deleted contents cannot be restored from the bin.',
+        tone: 'caution'
+      }
+    ] as const;
   }
-] as const;
+
+  if (platform === 'macos') {
+    return [
+      ...commonActions,
+      {
+        id: 'flush-dns',
+        title: 'Flush DNS cache',
+        description: 'Refresh the local DNS caches used by macOS name resolution.',
+        detail: 'Useful after network changes or stale DNS responses.'
+      },
+      {
+        id: 'restart-finder',
+        title: 'Restart Finder',
+        description: 'Quit and relaunch the macOS shell without signing out.',
+        detail: 'Useful when Finder windows or the desktop shell are misbehaving.',
+        tone: 'caution'
+      },
+      {
+        id: 'empty-trash',
+        title: 'Empty Trash',
+        description: 'Remove items currently sitting in the macOS Trash.',
+        detail: 'Reclaims space, but the deleted contents cannot be restored from the Trash.',
+        tone: 'caution'
+      }
+    ] as const;
+  }
+
+  return commonActions;
+};
 
 const EMPTY_ACTIONS = ['Connecting to the first live telemetry sample.'];
 
@@ -393,7 +437,7 @@ export const App = () => {
         setServices(nextServices);
       });
     } catch (cause) {
-      setError(getErrorMessage(cause, 'Unable to load Windows services.'));
+      setError(getErrorMessage(cause, 'Unable to load the current service inventory.'));
     } finally {
       setLoadingState('services', false);
     }
@@ -647,14 +691,38 @@ export const App = () => {
       return;
     }
 
+    const confirmationCopy =
+      actionId === 'restart-explorer'
+        ? {
+            title: 'Restart Windows Explorer',
+            description:
+              'This will stop and relaunch the Windows shell. The desktop and taskbar may blink briefly while Explorer starts again.',
+            confirmLabel: 'Restart Explorer'
+          }
+        : actionId === 'empty-recycle-bin'
+          ? {
+              title: 'Empty recycle bin',
+              description:
+                'This removes the contents currently in the recycle bin using the standard Windows command. Continue only if you no longer need those discarded items.',
+              confirmLabel: 'Empty recycle bin'
+            }
+          : actionId === 'restart-finder'
+            ? {
+                title: 'Restart Finder',
+                description:
+                  'This will quit and relaunch Finder. The desktop and Finder windows may blink briefly while the shell starts again.',
+                confirmLabel: 'Restart Finder'
+              }
+            : {
+                title: 'Empty Trash',
+                description:
+                  'This removes the contents currently in the Trash using the standard Finder action. Continue only if you no longer need those discarded items.',
+                confirmLabel: 'Empty Trash'
+              };
+
     setConfirmation({
       kind: 'utility-action',
-      title: actionId === 'restart-explorer' ? 'Restart Windows Explorer' : 'Empty recycle bin',
-      description:
-        actionId === 'restart-explorer'
-          ? 'This will stop and relaunch the Windows shell. The desktop and taskbar may blink briefly while Explorer starts again.'
-          : 'This removes the contents currently in the recycle bin using the standard Windows command. Continue only if you no longer need those discarded items.',
-      confirmLabel: actionId === 'restart-explorer' ? 'Restart Explorer' : 'Empty recycle bin',
+      ...confirmationCopy,
       action: actionId
     });
   };
@@ -920,6 +988,7 @@ export const App = () => {
   const enabledMonitorCount = settings ? Object.values(settings.monitors).filter(Boolean).length : 0;
   const hasUnsavedSettings = serializeSettings(settingsDraft) !== serializeSettings(settings);
   const actionsDisabled = Boolean(busyActionKey) || isSavingSettings;
+  const quickActions = getQuickActions(snapshot?.platform || null);
   const degradedMonitorCount = monitorStatuses.filter(
     (status) => status.state === 'degraded'
   ).length;
@@ -1241,9 +1310,9 @@ export const App = () => {
     <div className="actions-stack">
       <section className="actions-overview-grid">
         <QuickActionsPanel
-          actions={QUICK_ACTIONS}
+          actions={quickActions}
           disabled={actionsDisabled}
-          busyActionId={busyActionKey && QUICK_ACTIONS.some((action) => action.id === busyActionKey) ? (busyActionKey as QuickActionId) : null}
+          busyActionId={busyActionKey && quickActions.some((action) => action.id === busyActionKey) ? (busyActionKey as QuickActionId) : null}
           onRun={(actionId) => { void handleQuickAction(actionId); }}
         />
         <ActionHistoryPanel
@@ -1314,7 +1383,10 @@ export const App = () => {
             setConfirmation({
               kind: 'start-service',
               title: `Start service: ${service.displayName}`,
-              description: 'This asks Windows to start the selected service now. Permission failures or service-control errors will be reported clearly.',
+              description:
+                snapshot?.platform === 'macos'
+                  ? 'This asks launchd to start or kickstart the selected LaunchAgent now. Permission failures or launchctl errors will be reported clearly.'
+                  : 'This asks the OS to start the selected service now. Permission failures or service-control errors will be reported clearly.',
               confirmLabel: 'Start service',
               service
             });
@@ -1323,7 +1395,10 @@ export const App = () => {
             setConfirmation({
               kind: 'stop-service',
               title: `Stop service: ${service.displayName}`,
-              description: 'This asks Windows to stop the selected service. Continue only if you understand the impact on software that depends on it.',
+              description:
+                snapshot?.platform === 'macos'
+                  ? 'This asks launchd to boot out the selected LaunchAgent. Continue only if you understand the impact on software that depends on it.'
+                  : 'This asks the OS to stop the selected service. Continue only if you understand the impact on software that depends on it.',
               confirmLabel: 'Stop service',
               service
             });
@@ -1332,7 +1407,10 @@ export const App = () => {
             setConfirmation({
               kind: 'restart-service',
               title: `Restart service: ${service.displayName}`,
-              description: 'This asks Windows to restart the selected service. Permission failures or service-control errors will be reported clearly.',
+              description:
+                snapshot?.platform === 'macos'
+                  ? 'This asks launchd to kickstart the selected LaunchAgent again. Permission failures or launchctl errors will be reported clearly.'
+                  : 'This asks the OS to restart the selected service. Permission failures or service-control errors will be reported clearly.',
               confirmLabel: 'Restart service',
               service
             });
@@ -1353,7 +1431,7 @@ export const App = () => {
           <div className="brand-copy">
             <p className="section-kicker">Continental Systems</p>
             <h2>Sovereign</h2>
-            <p>Transparent Windows control center for system awareness and safe repair actions.</p>
+            <p>Transparent desktop control center for system awareness and safe repair actions.</p>
           </div>
         </div>
 

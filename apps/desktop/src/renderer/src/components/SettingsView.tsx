@@ -22,11 +22,11 @@ const PLATFORM_NOTES: Record<PlatformKey, string> = {
   windows:
     'Windows-only providers stay inside user-space PowerShell and OS command surfaces. Sovereign does not install drivers, persistence, or hidden background agents.',
   macos:
-    'This build runs in a fallback profile on macOS. Windows-only monitors and fixer actions stay visible as unsupported rather than pretending they are active.',
+    'The macOS profile stays inside standard user-space command surfaces such as launchctl, LaunchAgents, Gatekeeper, and Application Firewall reads. Unsupported Windows-only feeds stay visible as unsupported instead of pretending they are active.',
   linux:
-    'This build runs in a fallback profile on Linux. Windows service, startup, Defender, and firewall controls remain unavailable by design.',
+    'This build currently runs in a fallback profile on Linux. Windows and macOS startup, service, and security controls remain unavailable by design.',
   unknown:
-    'Some monitors and controls depend on explicit Windows APIs. Sovereign surfaces those limits instead of inventing unsupported coverage.'
+    'Some monitors and controls depend on explicit Windows or macOS APIs. Sovereign surfaces those limits instead of inventing unsupported coverage.'
 };
 
 const bytesPerSecondToMegabytes = (value: number): string =>
@@ -122,6 +122,53 @@ export const SettingsView = ({
       }
     });
   };
+
+  const monitorCards =
+    platform === 'macos'
+      ? ([
+          [
+            'processLaunchMonitoring',
+            'Process launches',
+            'Compare the live process table to detect newly observed launches.'
+          ],
+          [
+            'startupMonitoring',
+            'Launch items',
+            'Read visible LaunchAgents and LaunchDaemons and log additions or command changes.'
+          ],
+          [
+            'scheduledTaskMonitoring',
+            'Scheduled tasks',
+            'Windows Task Scheduler remains unsupported on macOS. LaunchAgent persistence is surfaced through the startup monitor instead.'
+          ],
+          [
+            'securityStatusMonitoring',
+            'Gatekeeper and firewall',
+            'Re-check Gatekeeper and the macOS Application Firewall through standard command surfaces.'
+          ]
+        ] as const)
+      : ([
+          [
+            'processLaunchMonitoring',
+            'Process launches',
+            'Compare the live process table to detect newly observed launches.'
+          ],
+          [
+            'startupMonitoring',
+            'Startup items',
+            'Read visible Windows startup entries and log additions or command changes.'
+          ],
+          [
+            'scheduledTaskMonitoring',
+            'Scheduled tasks',
+            'Read scheduled task summaries when Windows exposes them to the current user.'
+          ],
+          [
+            'securityStatusMonitoring',
+            'Defender and firewall',
+            'Re-check Microsoft Defender and Windows Firewall status through standard command surfaces.'
+          ]
+        ] as const);
 
   return (
     <section className="settings-grid">
@@ -236,30 +283,7 @@ export const SettingsView = ({
         </div>
 
         <div className="toggle-list">
-          {(
-            [
-              [
-                'processLaunchMonitoring',
-                'Process launches',
-                'Compare the live process table to detect newly observed launches.'
-              ],
-              [
-                'startupMonitoring',
-                'Startup items',
-                'Read visible Windows startup entries and log additions or command changes.'
-              ],
-              [
-                'scheduledTaskMonitoring',
-                'Scheduled tasks',
-                'Read scheduled task summaries when Windows exposes them to the current user.'
-              ],
-              [
-                'securityStatusMonitoring',
-                'Defender and firewall',
-                'Re-check Microsoft Defender and Windows Firewall status through standard command surfaces.'
-              ]
-            ] as const
-          ).map(([key, title, description]) => (
+          {monitorCards.map(([key, title, description]) => (
             <label
               key={key}
               className="toggle-card"

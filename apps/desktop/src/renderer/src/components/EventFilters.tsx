@@ -36,7 +36,9 @@ const SOURCE_OPTIONS: Array<{ value: 'all' | WatchdogSourceId; label: string }> 
   { value: 'startup-items', label: 'Startup items' },
   { value: 'scheduled-tasks', label: 'Scheduled tasks' },
   { value: 'defender-status', label: 'Defender' },
-  { value: 'firewall-status', label: 'Firewall' }
+  { value: 'firewall-status', label: 'Firewall' },
+  { value: 'gatekeeper-status', label: 'Gatekeeper' },
+  { value: 'application-firewall-status', label: 'App Firewall' }
 ];
 
 export const EventFilters = ({

@@ -27,11 +27,11 @@ import type {
 import type { DashboardService } from '@main/services/dashboardService';
 import type { ActionHistoryStore } from '@main/store/actionHistoryStore';
 import type { WatchdogService } from '@main/watchdog/watchdogService';
-import { WindowsStartupItemsProvider } from '@main/watchdog/startup/windowsStartupItemsProvider';
+import { createStartupItemsProvider } from '@main/watchdog/startup/startupItemsProvider';
 
 import { TempCleanupService } from './tempCleanupService';
-import { WindowsServicesProvider } from './windows/windowsServicesProvider';
-import { WindowsUtilityActionsProvider } from './windows/windowsUtilityActionsProvider';
+import { createServicesProvider } from './servicesProvider';
+import { createUtilityActionsProvider } from './utilityActionsProvider';
 
 const createResult = (
   kind: FixActionResult['kind'],
@@ -53,12 +53,47 @@ interface FixerServiceDependencies {
   watchdogService: WatchdogService;
 }
 
+const UTILITY_ACTION_COPY: Record<
+  RunUtilityActionRequest['action'],
+  {
+    summary: string;
+    details: string[];
+  }
+> = {
+  'flush-dns': {
+    summary: 'Flushed the local DNS cache',
+    details: ['The local DNS resolver cache was refreshed for the current machine.']
+  },
+  'restart-explorer': {
+    summary: 'Restarted Windows Explorer',
+    details: [
+      'Explorer was stopped and started again to recover the shell without rebooting the machine.'
+    ]
+  },
+  'empty-recycle-bin': {
+    summary: 'Emptied the recycle bin',
+    details: [
+      'Items currently in the recycle bin were removed using the standard Windows recycle-bin command.'
+    ]
+  },
+  'restart-finder': {
+    summary: 'Restarted Finder',
+    details: [
+      'Finder was quit and relaunched so the macOS desktop shell could recover without a full sign-out.'
+    ]
+  },
+  'empty-trash': {
+    summary: 'Emptied the Trash',
+    details: ['Items currently in the Trash were removed through the standard Finder action.']
+  }
+};
+
 export class FixerService {
   private readonly listeners = new Set<(result: FixActionResult) => void>();
   private readonly tempCleanupService = new TempCleanupService();
-  private readonly startupItemsProvider = new WindowsStartupItemsProvider();
-  private readonly servicesProvider = new WindowsServicesProvider();
-  private readonly utilityActionsProvider = new WindowsUtilityActionsProvider();
+  private readonly startupItemsProvider = createStartupItemsProvider();
+  private readonly servicesProvider = createServicesProvider();
+  private readonly utilityActionsProvider = createUtilityActionsProvider();
 
   constructor(
     private readonly dependencies: FixerServiceDependencies
@@ -158,7 +193,7 @@ export class FixerService {
   }
 
   async listStartupItems(): Promise<StartupItem[]> {
-    if (process.platform !== 'win32') {
+    if (!this.startupItemsProvider) {
       return [];
     }
 
@@ -167,7 +202,7 @@ export class FixerService {
   }
 
   async listStartupBackups(): Promise<StartupBackupSummary[]> {
-    if (process.platform !== 'win32') {
+    if (!this.startupItemsProvider) {
       return [];
     }
 
@@ -177,11 +212,16 @@ export class FixerService {
   async disableStartupItem(
     request: DisableStartupItemRequest
   ): Promise<FixActionResult> {
-    if (process.platform !== 'win32') {
+    if (!this.startupItemsProvider) {
       return this.recordResult(
-        createResult('disable-startup-item', false, 'Startup item control is Windows-only', [
-          'Run Sovereign on Windows 11 to disable startup entries from this panel.'
-        ])
+        createResult(
+          'disable-startup-item',
+          false,
+          'Startup item control is unavailable on this platform',
+          [
+            'Run Sovereign on Windows or macOS to disable startup entries from this panel.'
+          ]
+        )
       );
     }
 
@@ -234,11 +274,16 @@ export class FixerService {
   async restoreStartupItem(
     request: RestoreStartupItemRequest
   ): Promise<FixActionResult> {
-    if (process.platform !== 'win32') {
+    if (!this.startupItemsProvider) {
       return this.recordResult(
-        createResult('restore-startup-item', false, 'Startup restore is Windows-only', [
-          'Run Sovereign on Windows 11 to restore disabled startup entries.'
-        ])
+        createResult(
+          'restore-startup-item',
+          false,
+          'Startup restore is unavailable on this platform',
+          [
+            'Run Sovereign on Windows or macOS to restore previously disabled startup entries.'
+          ]
+        )
       );
     }
 
@@ -269,7 +314,7 @@ export class FixerService {
   }
 
   async listServices(): Promise<ServiceSummary[]> {
-    if (process.platform !== 'win32') {
+    if (!this.servicesProvider) {
       return [];
     }
 
@@ -282,10 +327,10 @@ export class FixerService {
   async startService(
     request: StartServiceRequest
   ): Promise<FixActionResult> {
-    if (process.platform !== 'win32') {
+    if (!this.servicesProvider) {
       return this.recordResult(
-        createResult('start-service', false, 'Service control is Windows-only', [
-          'Run Sovereign on Windows 11 to start services from this panel.'
+        createResult('start-service', false, 'Service control is unavailable on this platform', [
+          'Run Sovereign on Windows or macOS to control supported services from this panel.'
         ])
       );
     }
@@ -318,7 +363,7 @@ export class FixerService {
         'start-service',
         true,
         `Started service: ${service.displayName}`,
-        [`Service name: ${service.name}`, 'Windows permission failures are returned directly instead of hidden.']
+        [`Service name: ${service.name}`, 'Permission failures are returned directly instead of hidden.']
       );
     } catch (error) {
       return this.recordResult(
@@ -333,10 +378,10 @@ export class FixerService {
   async stopService(
     request: StopServiceRequest
   ): Promise<FixActionResult> {
-    if (process.platform !== 'win32') {
+    if (!this.servicesProvider) {
       return this.recordResult(
-        createResult('stop-service', false, 'Service control is Windows-only', [
-          'Run Sovereign on Windows 11 to stop services from this panel.'
+        createResult('stop-service', false, 'Service control is unavailable on this platform', [
+          'Run Sovereign on Windows or macOS to control supported services from this panel.'
         ])
       );
     }
@@ -369,7 +414,7 @@ export class FixerService {
         'stop-service',
         true,
         `Stopped service: ${service.displayName}`,
-        [`Service name: ${service.name}`, 'Windows permission failures are returned directly instead of hidden.']
+        [`Service name: ${service.name}`, 'Permission failures are returned directly instead of hidden.']
       );
     } catch (error) {
       return this.recordResult(
@@ -384,11 +429,14 @@ export class FixerService {
   async restartService(
     request: RestartServiceRequest
   ): Promise<FixActionResult> {
-    if (process.platform !== 'win32') {
+    if (!this.servicesProvider) {
       return this.recordResult(
-        createResult('restart-service', false, 'Service control is Windows-only', [
-          'Run Sovereign on Windows 11 to restart services from this panel.'
-        ])
+        createResult(
+          'restart-service',
+          false,
+          'Service control is unavailable on this platform',
+          ['Run Sovereign on Windows or macOS to control supported services from this panel.']
+        )
       );
     }
 
@@ -423,7 +471,7 @@ export class FixerService {
         'restart-service',
         true,
         `Restarted service: ${service.displayName}`,
-        [`Service name: ${service.name}`, 'If Windows required elevation and denied it, that failure would have been returned here instead.']
+        [`Service name: ${service.name}`, 'If the OS denied the action, that failure would have been returned here instead.']
       );
     } catch (error) {
       return this.recordResult(
@@ -438,31 +486,13 @@ export class FixerService {
   async runUtilityAction(
     request: RunUtilityActionRequest
   ): Promise<FixActionResult> {
-    if (process.platform !== 'win32') {
+    if (!this.utilityActionsProvider) {
       return this.recordResult(
-        createResult(request.action, false, 'This utility is Windows-only', [
-          'Run Sovereign on Windows 11 to use this repair action.'
+        createResult(request.action, false, 'This utility is unavailable on this platform', [
+          'Run Sovereign on Windows or macOS to use supported quick actions.'
         ])
       );
     }
-
-    const summaries: Record<RunUtilityActionRequest['action'], string> = {
-      'flush-dns': 'Flushed the local DNS cache',
-      'restart-explorer': 'Restarted Windows Explorer',
-      'empty-recycle-bin': 'Emptied the recycle bin'
-    };
-
-    const details: Record<RunUtilityActionRequest['action'], string[]> = {
-      'flush-dns': [
-        'Windows cleared the local DNS resolver cache for the current machine.'
-      ],
-      'restart-explorer': [
-        'Explorer was stopped and started again to recover the shell without rebooting the machine.'
-      ],
-      'empty-recycle-bin': [
-        'Items currently in the recycle bin were removed using the standard Windows recycle-bin command.'
-      ]
-    };
 
     try {
       await this.utilityActionsProvider.run(request.action);
@@ -472,7 +502,12 @@ export class FixerService {
       ]);
 
       return this.recordResult(
-        createResult(request.action, true, summaries[request.action], details[request.action])
+        createResult(
+          request.action,
+          true,
+          UTILITY_ACTION_COPY[request.action].summary,
+          UTILITY_ACTION_COPY[request.action].details
+        )
       );
     } catch (error) {
       return this.recordResult(
@@ -501,7 +536,7 @@ export class FixerService {
     try {
       await this.dependencies.watchdogService.refreshNow();
       details.push(
-        'Watchdog providers re-polled, including startup, scheduled tasks, and Defender/firewall status where supported.'
+        'Watchdog providers re-polled, including startup, scheduled tasks, and platform security status where supported.'
       );
     } catch (error) {
       success = false;

@@ -1,5 +1,12 @@
 interface QuickActionDefinition {
-  id: 'refresh-diagnostics' | 'preview-temp-cleanup' | 'flush-dns' | 'restart-explorer' | 'empty-recycle-bin';
+  id:
+    | 'refresh-diagnostics'
+    | 'preview-temp-cleanup'
+    | 'flush-dns'
+    | 'restart-explorer'
+    | 'empty-recycle-bin'
+    | 'restart-finder'
+    | 'empty-trash';
   title: string;
   description: string;
   detail: string;

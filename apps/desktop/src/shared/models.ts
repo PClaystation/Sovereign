@@ -17,7 +17,9 @@ export type WatchdogSourceId =
   | 'startup-items'
   | 'scheduled-tasks'
   | 'defender-status'
-  | 'firewall-status';
+  | 'firewall-status'
+  | 'gatekeeper-status'
+  | 'application-firewall-status';
 
 export interface ResourceAdvice {
   headline: string;
@@ -276,7 +278,9 @@ export type FixActionKind =
   | 'restart-service'
   | 'flush-dns'
   | 'restart-explorer'
+  | 'restart-finder'
   | 'empty-recycle-bin'
+  | 'empty-trash'
   | 'disable-startup-item'
   | 'restore-startup-item'
   | 'refresh-diagnostics';

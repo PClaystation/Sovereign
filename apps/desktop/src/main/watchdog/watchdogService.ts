@@ -24,7 +24,7 @@ interface MonitorRegistration {
   title: string;
   description: string;
   pollingIntervalMs: number;
-  windowsOnly?: boolean;
+  supportedPlatforms?: NodeJS.Platform[];
   monitor: WatchdogMonitor;
 }
 
@@ -40,23 +40,29 @@ const MONITOR_METADATA: Array<
   {
     id: 'startupMonitoring',
     title: 'Startup items',
-    description: 'Compare visible Windows startup entries and highlight suspicious paths or changes.',
+    description:
+      process.platform === 'darwin'
+        ? 'Compare visible LaunchAgents and LaunchDaemons and highlight suspicious paths or changes.'
+        : 'Compare visible startup entries and highlight suspicious paths or changes.',
     pollingIntervalMs: 120_000,
-    windowsOnly: true
+    supportedPlatforms: ['win32', 'darwin']
   },
   {
     id: 'scheduledTaskMonitoring',
     title: 'Scheduled tasks',
     description: 'Read readable scheduled task summaries and surface new or changed tasks.',
     pollingIntervalMs: 180_000,
-    windowsOnly: true
+    supportedPlatforms: ['win32']
   },
   {
     id: 'securityStatusMonitoring',
-    title: 'Defender and firewall',
-    description: 'Re-check Microsoft Defender and Windows Firewall status through safe command surfaces.',
+    title: process.platform === 'darwin' ? 'Gatekeeper and firewall' : 'Defender and firewall',
+    description:
+      process.platform === 'darwin'
+        ? 'Re-check Gatekeeper and macOS Application Firewall status through safe command surfaces.'
+        : 'Re-check Microsoft Defender and Windows Firewall status through safe command surfaces.',
     pollingIntervalMs: 90_000,
-    windowsOnly: true
+    supportedPlatforms: ['win32', 'darwin']
   }
 ];
 
@@ -316,7 +322,7 @@ export class WatchdogService {
   }
 
   private isMonitorSupported(registration: MonitorRegistration): boolean {
-    return !registration.windowsOnly || process.platform === 'win32';
+    return !registration.supportedPlatforms || registration.supportedPlatforms.includes(process.platform);
   }
 
   private createMonitorStatus(registration: MonitorRegistration): WatchdogMonitorRuntime {

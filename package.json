@@ -10,7 +10,8 @@
     "build": "npm run build --workspace @continental/sovereign-desktop",
     "test": "npm run test --workspace @continental/sovereign-desktop",
     "typecheck": "npm run typecheck --workspace @continental/sovereign-desktop",
-    "package:win": "npm run package:win --workspace @continental/sovereign-desktop"
+    "package:win": "npm run package:win --workspace @continental/sovereign-desktop",
+    "package:mac": "npm run package:mac --workspace @continental/sovereign-desktop"
   },
   "devDependencies": {
     "electron": "^30.0.0"

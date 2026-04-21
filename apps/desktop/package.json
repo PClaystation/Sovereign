@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "productName": "Sovereign",
-  "description": "Sovereign is a transparent desktop system control center for Windows 11.",
+  "description": "Sovereign is a transparent desktop system control center for Windows and macOS.",
   "author": "Continental",
   "main": "out/main/index.js",
   "scripts": {
@@ -11,7 +11,8 @@
     "build": "npm run typecheck && electron-vite build",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "package:win": "npm run build && set \"ELECTRON_CACHE=..\\..\\.electron-cache\" && set \"ELECTRON_BUILDER_CACHE=..\\..\\.electron-builder-cache\" && electron-builder --win nsis --x64"
+    "package:win": "npm run build && set \"ELECTRON_CACHE=..\\..\\.electron-cache\" && set \"ELECTRON_BUILDER_CACHE=..\\..\\.electron-builder-cache\" && electron-builder --win nsis --x64",
+    "package:mac": "npm run build && ELECTRON_CACHE=../../.electron-cache ELECTRON_BUILDER_CACHE=../../.electron-builder-cache electron-builder --mac dmg zip"
   },
   "dependencies": {
     "react": "^19.2.4",
@@ -50,6 +51,14 @@
         "nsis"
       ],
       "artifactName": "${productName}-${version}-Setup-${arch}.${ext}"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
   }
 }

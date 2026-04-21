@@ -14,7 +14,10 @@ import type {
 } from '@main/watchdog/types';
 import { buildKey, extractCommandPath } from '@main/watchdog/helpers';
 
-import { WindowsStartupItemsProvider } from './windowsStartupItemsProvider';
+import {
+  createStartupItemsProvider,
+  getStartupInventorySourceDescription
+} from './startupItemsProvider';
 
 const POLL_INTERVAL_MS = 120_000;
 
@@ -25,7 +28,7 @@ const getCommandSignature = (item: StartupItemRecord): string =>
   buildKey(item.command, item.enabled);
 
 export class StartupMonitor implements WatchdogMonitor {
-  private readonly provider = new WindowsStartupItemsProvider();
+  private readonly provider = createStartupItemsProvider();
   private readonly fileTrustProvider = new FileTrustProvider();
   private knownItems = new Map<string, StartupItemRecord>();
   private pollTimer: NodeJS.Timeout | undefined;
@@ -35,7 +38,7 @@ export class StartupMonitor implements WatchdogMonitor {
   constructor(private readonly publish: EventPublisher) {}
 
   async initialize(): Promise<WatchdogMonitorInitializationResult> {
-    if (process.platform !== 'win32') {
+    if (!this.provider) {
       await this.publish(
         createWatchdogEvent({
           source: 'startup-items',
@@ -43,24 +46,25 @@ export class StartupMonitor implements WatchdogMonitor {
           severity: 'info',
           kind: 'status',
           confidence: 'low',
-          title: 'Startup inventory is Windows-only',
+          title: 'Startup inventory is unavailable on this platform',
           description:
-            'Startup item monitoring currently relies on Windows startup sources and is unavailable on this platform.',
+            'Startup item monitoring currently relies on Windows or macOS startup sources and is unavailable on this platform.',
           rationale:
-            'The startup inventory provider uses Windows registry and startup-folder sources.',
+            'The startup inventory provider currently reads Windows startup entries or macOS LaunchAgents and LaunchDaemons.',
           whyThisMatters:
             'Sovereign surfaces the platform limit explicitly instead of pretending it can read startup items everywhere.',
           evidence: [
-            'Current platform is not Windows.',
-            'Disabled startup entries are only observable through Windows-specific sources.'
+            `Current platform is ${process.platform}.`,
+            'Startup coverage is currently implemented for Windows and macOS only.'
           ],
-          recommendedAction: 'Run Sovereign on Windows 11 to capture and compare startup items.'
+          recommendedAction:
+            'Run Sovereign on Windows or macOS to capture and compare startup items.'
         })
       );
 
       return {
         baselineItemCount: 0,
-        note: 'Startup monitoring is only available on Windows.'
+        note: 'Startup monitoring is currently available on Windows and macOS.'
       };
     }
 
@@ -85,8 +89,8 @@ export class StartupMonitor implements WatchdogMonitor {
           'New or changed startup items are easier to explain when the current baseline is explicit.',
         evidence: [
           `Observed startup items: ${startupItems.length}`,
-          'Source: Win32_StartupCommand',
-          'Disabled startup entries may not be visible through this source.'
+          `Source: ${getStartupInventorySourceDescription()}`,
+          'Some disabled entries may only become visible after they are moved or restored through the app.'
         ],
         recommendedAction:
           'Review unexpected startup entries carefully, especially if they point into user-writable paths.'
@@ -117,14 +121,14 @@ export class StartupMonitor implements WatchdogMonitor {
           confidence: 'low',
           title: 'Startup inventory could not be read',
           description:
-            'Sovereign could not read startup items from the current Windows source.',
+            'Sovereign could not read startup items from the current platform source.',
           rationale:
-            'The Windows startup inventory command failed during baseline capture.',
+            'The startup inventory provider failed during baseline capture.',
           whyThisMatters:
             'If startup data is unavailable, later add/change comparisons are limited until the next successful refresh.',
           evidence: [error instanceof Error ? error.message : 'Unknown startup inventory error.'],
           recommendedAction:
-            'Some environments restrict or reshape startup data. Compare with Task Manager startup entries if needed.'
+            'Some environments restrict or reshape startup data. Compare with the OS startup tools if needed.'
         })
       );
 
@@ -136,7 +140,7 @@ export class StartupMonitor implements WatchdogMonitor {
   }
 
   start(): void {
-    if (process.platform !== 'win32' || this.pollTimer) {
+    if (!this.provider || this.pollTimer) {
       return;
     }
 
@@ -155,7 +159,7 @@ export class StartupMonitor implements WatchdogMonitor {
   }
 
   async refreshNow(): Promise<void> {
-    if (process.platform !== 'win32') {
+    if (!this.provider) {
       return;
     }
 
@@ -173,6 +177,10 @@ export class StartupMonitor implements WatchdogMonitor {
   }
 
   private async poll(): Promise<void> {
+    if (!this.provider) {
+      return;
+    }
+
     try {
       const startupItems = await this.provider.list();
       const nextItems = new Map(startupItems.map((item) => [getIdentity(item), item]));
@@ -256,7 +264,7 @@ export class StartupMonitor implements WatchdogMonitor {
             'A missed cycle can hide a startup change until the next successful refresh.',
           evidence: [error instanceof Error ? error.message : 'Unknown startup polling error.'],
           recommendedAction:
-            'The monitor will retry automatically. Compare with Task Manager if changes are urgent.'
+            'The monitor will retry automatically. Compare with the OS startup tools if changes are urgent.'
         })
       );
     }
@@ -274,7 +282,7 @@ export class StartupMonitor implements WatchdogMonitor {
       kind: 'change',
       confidence: pathAssessment.confidence,
       title: `Startup item added: ${item.name}`,
-      description: 'A new startup entry appeared in the Windows startup inventory.',
+      description: 'A new startup entry appeared in the latest startup inventory.',
       rationale: pathAssessment.rationale,
       whyThisMatters:
         'New startup entries change what launches automatically after sign-in and are worth confirming.',
@@ -315,7 +323,7 @@ export class StartupMonitor implements WatchdogMonitor {
       confidence,
       title: `Startup item changed: ${nextItem.name}`,
       description:
-        'An existing startup entry changed command or enabled state in the latest Windows inventory.',
+        'An existing startup entry changed command or enabled state in the latest startup inventory.',
       rationale:
         pathAssessment.severity === 'info'
           ? 'The startup command changed even though the new path does not currently match a heuristic.'

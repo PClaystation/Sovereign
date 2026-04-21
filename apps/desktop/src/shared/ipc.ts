@@ -91,7 +91,12 @@ export interface StopServiceRequest {
 }
 
 export interface RunUtilityActionRequest {
-  action: 'flush-dns' | 'restart-explorer' | 'empty-recycle-bin';
+  action:
+    | 'flush-dns'
+    | 'restart-explorer'
+    | 'empty-recycle-bin'
+    | 'restart-finder'
+    | 'empty-trash';
 }
 
 export interface ListActionHistoryRequest {

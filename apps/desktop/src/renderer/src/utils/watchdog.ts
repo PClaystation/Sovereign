@@ -25,7 +25,9 @@ export const WATCHDOG_SOURCE_LABELS: Record<WatchdogSourceId, string> = {
   'startup-items': 'Startup items',
   'scheduled-tasks': 'Scheduled tasks',
   'defender-status': 'Defender status',
-  'firewall-status': 'Firewall status'
+  'firewall-status': 'Firewall status',
+  'gatekeeper-status': 'Gatekeeper status',
+  'application-firewall-status': 'Application Firewall status'
 };
 
 export const WATCHDOG_KIND_LABELS: Record<WatchdogEventKind, string> = {

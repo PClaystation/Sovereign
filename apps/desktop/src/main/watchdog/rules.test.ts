@@ -22,6 +22,16 @@ test('treats downloads paths as unusual', () => {
   assert.ok(assessment.labels.includes('Downloads path'));
 });
 
+test('treats macOS user application data paths as unusual', () => {
+  const assessment = analyzeExecutablePath(
+    '/Users/operator/Library/Application Support/Vendor/updater'
+  );
+
+  assert.equal(assessment.severity, 'unusual');
+  assert.equal(assessment.confidence, 'medium');
+  assert.ok(assessment.labels.includes('User app data path'));
+});
+
 test('returns an informational assessment for normal program files paths', () => {
   const assessment = analyzeExecutablePath('C:\\Program Files\\Vendor\\App\\app.exe');
 
