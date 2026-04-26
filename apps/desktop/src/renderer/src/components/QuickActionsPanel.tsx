@@ -3,8 +3,14 @@ interface QuickActionDefinition {
     | 'refresh-diagnostics'
     | 'preview-temp-cleanup'
     | 'flush-dns'
+    | 'open-temp-folder'
+    | 'open-downloads-folder'
+    | 'open-task-manager'
+    | 'open-windows-security'
     | 'restart-explorer'
     | 'empty-recycle-bin'
+    | 'open-activity-monitor'
+    | 'open-system-settings'
     | 'restart-finder'
     | 'empty-trash';
   title: string;
@@ -30,10 +36,10 @@ export const QuickActionsPanel = ({
     <div className="panel-heading">
       <div>
         <p className="section-kicker">Action hub</p>
-        <h2>Quick repair actions</h2>
+        <h2>Quick tools and repair actions</h2>
       </div>
       <p className="panel-meta">
-        Common recovery tasks that act immediately and return explicit results.
+        Common recovery tasks.
       </p>
     </div>
 

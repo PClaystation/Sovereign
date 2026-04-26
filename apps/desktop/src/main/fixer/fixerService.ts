@@ -63,6 +63,30 @@ const UTILITY_ACTION_COPY: Record<
     summary: 'Flushed the local DNS cache',
     details: ['The local DNS resolver cache was refreshed for the current machine.']
   },
+  'open-temp-folder': {
+    summary: 'Opened the temp folder',
+    details: [
+      'The operating-system temp directory was opened so you can inspect or clean it manually.'
+    ]
+  },
+  'open-downloads-folder': {
+    summary: 'Opened the downloads folder',
+    details: [
+      'The operating-system downloads directory was opened for manual review of recent files.'
+    ]
+  },
+  'open-task-manager': {
+    summary: 'Opened Task Manager',
+    details: [
+      'Windows Task Manager was launched so you can inspect live process and performance data.'
+    ]
+  },
+  'open-windows-security': {
+    summary: 'Opened Windows Security',
+    details: [
+      'The Windows Security app was launched so you can review Defender and device protection status.'
+    ]
+  },
   'restart-explorer': {
     summary: 'Restarted Windows Explorer',
     details: [
@@ -75,6 +99,18 @@ const UTILITY_ACTION_COPY: Record<
       'Items currently in the recycle bin were removed using the standard Windows recycle-bin command.'
     ]
   },
+  'open-activity-monitor': {
+    summary: 'Opened Activity Monitor',
+    details: [
+      'Activity Monitor was launched so you can inspect live process, memory, and energy usage.'
+    ]
+  },
+  'open-system-settings': {
+    summary: 'Opened System Settings',
+    details: [
+      'System Settings was launched so you can adjust macOS controls outside the app when needed.'
+    ]
+  },
   'restart-finder': {
     summary: 'Restarted Finder',
     details: [
@@ -84,6 +120,14 @@ const UTILITY_ACTION_COPY: Record<
   'empty-trash': {
     summary: 'Emptied the Trash',
     details: ['Items currently in the Trash were removed through the standard Finder action.']
+  }
+};
+
+const runShellOpenPath = async (targetPath: string): Promise<void> => {
+  const errorMessage = await shell.openPath(targetPath);
+
+  if (errorMessage) {
+    throw new Error(errorMessage);
   }
 };
 
@@ -478,6 +522,48 @@ export class FixerService {
   async runUtilityAction(
     request: RunUtilityActionRequest
   ): Promise<FixActionResult> {
+    if (request.action === 'open-temp-folder') {
+      try {
+        const targetPath = app.getPath('temp');
+        await runShellOpenPath(targetPath);
+
+        return this.recordResult(
+          createResult(request.action, true, UTILITY_ACTION_COPY[request.action].summary, [
+            `Opened: ${targetPath}`,
+            ...UTILITY_ACTION_COPY[request.action].details
+          ])
+        );
+      } catch (error) {
+        return this.recordResult(
+          request.action,
+          false,
+          'Could not open the temp folder',
+          [error instanceof Error ? error.message : 'Unknown folder open error.']
+        );
+      }
+    }
+
+    if (request.action === 'open-downloads-folder') {
+      try {
+        const targetPath = app.getPath('downloads');
+        await runShellOpenPath(targetPath);
+
+        return this.recordResult(
+          createResult(request.action, true, UTILITY_ACTION_COPY[request.action].summary, [
+            `Opened: ${targetPath}`,
+            ...UTILITY_ACTION_COPY[request.action].details
+          ])
+        );
+      } catch (error) {
+        return this.recordResult(
+          request.action,
+          false,
+          'Could not open the downloads folder',
+          [error instanceof Error ? error.message : 'Unknown folder open error.']
+        );
+      }
+    }
+
     if (!this.utilityActionsProvider) {
       return this.recordResult(
         createResult(request.action, false, 'This utility is unavailable on this platform', [

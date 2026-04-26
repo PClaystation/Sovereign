@@ -50,9 +50,12 @@ const MONITOR_METADATA: Array<
   {
     id: 'scheduledTaskMonitoring',
     title: 'Scheduled tasks',
-    description: 'Read readable scheduled task summaries and surface new or changed tasks.',
+    description:
+      process.platform === 'darwin'
+        ? 'Read readable launchd jobs with scheduled triggers and surface new or changed entries.'
+        : 'Read readable scheduled task summaries and surface new or changed tasks.',
     pollingIntervalMs: 180_000,
-    supportedPlatforms: ['win32']
+    supportedPlatforms: ['win32', 'darwin']
   },
   {
     id: 'securityStatusMonitoring',

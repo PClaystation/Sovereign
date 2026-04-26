@@ -24,7 +24,7 @@ export const SystemIdentityPanel = ({
             <h2>Hardware and OS context</h2>
           </div>
         </div>
-        <p className="state-block">Waiting for the first machine profile sample.</p>
+        <p className="state-block">Waiting for system info.</p>
       </section>
     );
   }
@@ -71,9 +71,7 @@ export const SystemIdentityPanel = ({
           <p className="section-kicker">System profile</p>
           <h2>Hardware and OS context</h2>
         </div>
-        <p className="panel-meta">
-          Static machine context alongside the live snapshot.
-        </p>
+        <p className="panel-meta">Machine details.</p>
       </div>
 
       <div className="identity-grid">

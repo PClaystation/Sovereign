@@ -110,7 +110,7 @@ const TrendCard = ({
             />
           </svg>
         ) : (
-          <div className="trend-placeholder">Waiting for enough samples to draw this chart.</div>
+          <div className="trend-placeholder">Waiting for samples.</div>
         )}
       </div>
 
@@ -234,11 +234,9 @@ export const TelemetryTrendsPanel = ({
             <p className="section-kicker">Trend graphs</p>
             <h2>Telemetry curves</h2>
           </div>
-          <p className="panel-meta">
-            Building the first chart window from live samples.
-          </p>
+          <p className="panel-meta">Building chart history.</p>
         </div>
-        <p className="state-block">Waiting for the first full dashboard snapshot.</p>
+        <p className="state-block">Waiting for the first snapshot.</p>
       </section>
     );
   }
@@ -251,8 +249,7 @@ export const TelemetryTrendsPanel = ({
           <h2>Telemetry curves</h2>
         </div>
         <p className="panel-meta">
-          {recentHistory.length} live sample{recentHistory.length === 1 ? '' : 's'} across CPU,
-          memory, network, and disk activity.
+          {recentHistory.length} sample{recentHistory.length === 1 ? '' : 's'}.
         </p>
       </div>
 

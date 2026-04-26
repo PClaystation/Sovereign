@@ -34,9 +34,9 @@ export const SystemStatisticsPanel = ({
             <p className="section-kicker">System statistics</p>
             <h2>Live counters</h2>
           </div>
-          <p className="panel-meta">Waiting for the runtime census.</p>
+          <p className="panel-meta">Waiting for telemetry.</p>
         </div>
-        <p className="state-block">Telemetry is still warming up.</p>
+        <p className="state-block">Telemetry is warming up.</p>
       </section>
     );
   }
@@ -126,9 +126,7 @@ export const SystemStatisticsPanel = ({
           <p className="section-kicker">System statistics</p>
           <h2>Live counters</h2>
         </div>
-        <p className="panel-meta">
-          Dense runtime numbers for the current snapshot, without leaving the overview.
-        </p>
+        <p className="panel-meta">Current snapshot.</p>
       </div>
 
       <div className="statistics-grid">

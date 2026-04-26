@@ -32,11 +32,7 @@ export const ServicesPanel = ({
           <p className="section-kicker">Repair tool</p>
           <h2>{isMacos ? 'Launch agent controls' : 'Service controls'}</h2>
         </div>
-        <p className="panel-meta">
-          {isMacos
-            ? 'Start, stop, or restart user LaunchAgents with explicit confirmation and failure reporting.'
-            : 'Start, stop, or restart individual services with explicit confirmation and failure reporting.'}
-        </p>
+        <p className="panel-meta">{isMacos ? 'Start, stop, or restart agents.' : 'Start, stop, or restart services.'}</p>
       </div>
 
       <input
@@ -50,8 +46,8 @@ export const ServicesPanel = ({
       {isLoading && services.length === 0 ? (
         <div className="fixer-empty">
           {isMacos
-            ? 'Reading the current macOS LaunchAgent inventory.'
-            : 'Reading the current service inventory.'}
+            ? 'Loading launch agents.'
+            : 'Loading services.'}
         </div>
       ) : services.length > 0 ? (
         <div className="fixer-content">
@@ -103,7 +99,7 @@ export const ServicesPanel = ({
             ? 'No services match the current filter.'
             : platform === 'macos'
               ? 'No user LaunchAgents match the current filter.'
-              : 'Service control is available when Sovereign runs on Windows or macOS.'}
+              : 'Service control is unavailable on this platform.'}
         </div>
       )}
     </section>

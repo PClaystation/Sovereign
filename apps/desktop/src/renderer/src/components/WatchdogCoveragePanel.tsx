@@ -23,7 +23,7 @@ export const WatchdogCoveragePanel = ({
             <h2>Feed runtime health</h2>
           </div>
         </div>
-        <p className="state-block">Reading monitor coverage and runtime state.</p>
+        <p className="state-block">Loading monitor status.</p>
       </section>
     );
   }
@@ -35,9 +35,7 @@ export const WatchdogCoveragePanel = ({
           <p className="section-kicker">Watchdog coverage</p>
           <h2>Feed runtime health</h2>
         </div>
-        <p className="panel-meta">
-          Active, degraded, and unsupported watchdog feeds are surfaced explicitly.
-        </p>
+        <p className="panel-meta">Feed status.</p>
       </div>
 
       <div className="coverage-list">

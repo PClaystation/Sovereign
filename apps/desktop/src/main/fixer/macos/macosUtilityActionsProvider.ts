@@ -3,7 +3,7 @@ import type { RunUtilityActionRequest } from '@shared/ipc';
 
 export type MacosUtilityAction = Extract<
   RunUtilityActionRequest['action'],
-  'flush-dns' | 'restart-finder' | 'empty-trash'
+  'flush-dns' | 'open-activity-monitor' | 'open-system-settings' | 'restart-finder' | 'empty-trash'
 >;
 
 export class MacosUtilityActionsProvider {
@@ -17,6 +17,16 @@ export class MacosUtilityActionsProvider {
     if (action === 'restart-finder') {
       await runMacosTextCommand('osascript', ['-e', 'tell application "Finder" to quit']);
       await runMacosTextCommand('open', ['-a', 'Finder']);
+      return;
+    }
+
+    if (action === 'open-activity-monitor') {
+      await runMacosTextCommand('open', ['-a', 'Activity Monitor']);
+      return;
+    }
+
+    if (action === 'open-system-settings') {
+      await runMacosTextCommand('open', ['-a', 'System Settings']);
       return;
     }
 

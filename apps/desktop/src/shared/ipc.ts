@@ -94,8 +94,14 @@ export interface StopServiceRequest {
 export interface RunUtilityActionRequest {
   action:
     | 'flush-dns'
+    | 'open-temp-folder'
+    | 'open-downloads-folder'
+    | 'open-task-manager'
+    | 'open-windows-security'
     | 'restart-explorer'
     | 'empty-recycle-bin'
+    | 'open-activity-monitor'
+    | 'open-system-settings'
     | 'restart-finder'
     | 'empty-trash';
 }

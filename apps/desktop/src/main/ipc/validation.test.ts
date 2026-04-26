@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   validateEventsListRequest,
   validateOpenProcessLocationRequest,
+  validateRunUtilityActionRequest,
   validateUpdateSettingsRequest
 } from './validation';
 
@@ -65,5 +66,15 @@ test('validates and trims open-location requests', () => {
     name: 'Windows Explorer',
     path: 'C:\\Windows\\explorer.exe',
     pid: 4212
+  });
+});
+
+test('accepts supported utility actions', () => {
+  const request = validateRunUtilityActionRequest({
+    action: ' open-windows-security '
+  });
+
+  assert.deepEqual(request, {
+    action: 'open-windows-security'
   });
 });

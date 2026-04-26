@@ -55,8 +55,14 @@ import { findMatchingSuppression } from './utils/watchdog';
 type AppView = 'dashboard' | 'investigate' | 'actions' | 'settings';
 type UtilityActionId =
   | 'flush-dns'
+  | 'open-temp-folder'
+  | 'open-downloads-folder'
+  | 'open-task-manager'
+  | 'open-windows-security'
   | 'restart-explorer'
   | 'empty-recycle-bin'
+  | 'open-activity-monitor'
+  | 'open-system-settings'
   | 'restart-finder'
   | 'empty-trash';
 type QuickActionId = 'refresh-diagnostics' | 'preview-temp-cleanup' | UtilityActionId;
@@ -130,42 +136,30 @@ const PLATFORM_LABELS: Record<SystemMetricsSnapshot['platform'], string> = {
   unknown: 'Generic fallback profile'
 };
 
-const VIEW_COPY: Record<AppView, { title: string; description: string; helper: string }> = {
+const VIEW_COPY: Record<AppView, { title: string; description: string }> = {
   dashboard: {
-    title: 'Live system posture at a glance',
-    description:
-      'Start with a compact system summary instead of a wall of unrelated panels.',
-    helper:
-      'Use Dashboard for overall load, health guidance, and trend context before drilling into details.'
+    title: 'System overview',
+    description: 'Load, health, and recent changes.'
   },
   investigate: {
-    title: 'Process and event triage',
-    description:
-      'Filter active processes and recent watchdog events in a workspace built for investigation.',
-    helper:
-      'Use Investigate when you need to decide what changed, what looks unusual, and what to do next.'
+    title: 'Investigate',
+    description: 'Processes and events.'
   },
   actions: {
-    title: 'Action center for useful fixes',
-    description:
-      'Run quick recovery tasks and targeted control actions instead of just observing the machine.',
-    helper:
-      'All actions remain user-invoked, visible, and explicit about OS-side failures or permission limits.'
+    title: 'Actions',
+    description: 'Fixes and controls.'
   },
   settings: {
-    title: 'Thresholds and monitor coverage',
-    description:
-      'Tune how Sovereign scores pressure and choose which watchdog feeds stay active while the app is open.',
-    helper:
-      "Settings change Sovereign's own guidance. They do not install drivers, persistence, or background agents."
+    title: 'Settings',
+    description: 'Thresholds, polling, and visibility.'
   }
 };
 
 const NAV_ITEMS: Array<{ id: AppView; label: string; description: string }> = [
-  { id: 'dashboard', label: 'Dashboard', description: 'Live load, trends, and overall posture' },
-  { id: 'investigate', label: 'Investigate', description: 'Processes, timeline filters, and drill-down detail' },
-  { id: 'actions', label: 'Actions', description: 'Quick repair tasks plus startup and service controls' },
-  { id: 'settings', label: 'Settings', description: 'Thresholds, toggles, and dashboard preferences' }
+  { id: 'dashboard', label: 'Dashboard', description: 'Load, trends, posture' },
+  { id: 'investigate', label: 'Investigate', description: 'Processes and events' },
+  { id: 'actions', label: 'Actions', description: 'Repair and control tools' },
+  { id: 'settings', label: 'Settings', description: 'Thresholds and preferences' }
 ];
 
 const getQuickActions = (
@@ -175,14 +169,26 @@ const getQuickActions = (
     {
       id: 'refresh-diagnostics',
       title: 'Refresh diagnostics',
-      description: 'Re-poll telemetry, watchdog providers, and inventories now.',
-      detail: 'Useful after making system changes outside the app.'
+      description: 'Refresh telemetry now.',
+      detail: 'Useful after system changes.'
     },
     {
       id: 'preview-temp-cleanup',
       title: 'Preview temp cleanup',
-      description: 'Build a safe deletion preview before removing temporary files.',
-      detail: 'Keeps cleanup explicit instead of deleting first and reporting later.'
+      description: 'Review temp files before cleanup.',
+      detail: 'Nothing is removed yet.'
+    },
+    {
+      id: 'open-temp-folder',
+      title: 'Open temp folder',
+      description: 'Open the temp folder.',
+      detail: 'Useful for quick inspection.'
+    },
+    {
+      id: 'open-downloads-folder',
+      title: 'Open downloads folder',
+      description: 'Open the downloads folder.',
+      detail: 'Useful for quick inspection.'
     }
   ] as const;
 
@@ -192,22 +198,33 @@ const getQuickActions = (
       {
         id: 'flush-dns',
         title: 'Flush DNS cache',
-        description: 'Clear the local DNS resolver cache for name-resolution issues.',
-        detail: 'Useful after network changes or stale DNS responses.'
+        description: 'Clear the DNS resolver cache.',
+        detail: 'Useful after network changes.'
+      },
+      {
+        id: 'open-task-manager',
+        title: 'Open Task Manager',
+        description: 'Open Task Manager.',
+        detail: 'Native system view.'
+      },
+      {
+        id: 'open-windows-security',
+        title: 'Open Windows Security',
+        description: 'Open Windows Security.',
+        detail: 'Native security view.'
       },
       {
         id: 'restart-explorer',
         title: 'Restart Explorer',
-        description: 'Restart the Windows shell without rebooting the machine.',
-        detail: 'Useful when the taskbar, desktop, or file shell is misbehaving.',
+        description: 'Restart the Windows shell.',
+        detail: 'Useful when the shell misbehaves.',
         tone: 'caution'
       },
       {
         id: 'empty-recycle-bin',
         title: 'Empty recycle bin',
-        description:
-          'Remove currently discarded items using the standard Windows recycle-bin command.',
-        detail: 'Reclaims space, but the deleted contents cannot be restored from the bin.',
+        description: 'Empty the recycle bin.',
+        detail: 'Bin contents cannot be restored.',
         tone: 'caution'
       }
     ] as const;
@@ -219,21 +236,33 @@ const getQuickActions = (
       {
         id: 'flush-dns',
         title: 'Flush DNS cache',
-        description: 'Refresh the local DNS caches used by macOS name resolution.',
-        detail: 'Useful after network changes or stale DNS responses.'
+        description: 'Clear local DNS caches.',
+        detail: 'Useful after network changes.'
+      },
+      {
+        id: 'open-activity-monitor',
+        title: 'Open Activity Monitor',
+        description: 'Open Activity Monitor.',
+        detail: 'Native system view.'
+      },
+      {
+        id: 'open-system-settings',
+        title: 'Open System Settings',
+        description: 'Open System Settings.',
+        detail: 'Native settings view.'
       },
       {
         id: 'restart-finder',
         title: 'Restart Finder',
-        description: 'Quit and relaunch the macOS shell without signing out.',
-        detail: 'Useful when Finder windows or the desktop shell are misbehaving.',
+        description: 'Restart Finder.',
+        detail: 'Useful when the shell misbehaves.',
         tone: 'caution'
       },
       {
         id: 'empty-trash',
         title: 'Empty Trash',
-        description: 'Remove items currently sitting in the macOS Trash.',
-        detail: 'Reclaims space, but the deleted contents cannot be restored from the Trash.',
+        description: 'Empty the Trash.',
+        detail: 'Trash contents cannot be restored.',
         tone: 'caution'
       }
     ] as const;
@@ -243,6 +272,15 @@ const getQuickActions = (
 };
 
 const EMPTY_ACTIONS = ['Connecting to the first live telemetry sample.'];
+const IMMEDIATE_UTILITY_ACTIONS: ReadonlySet<UtilityActionId> = new Set([
+  'flush-dns',
+  'open-temp-folder',
+  'open-downloads-folder',
+  'open-task-manager',
+  'open-windows-security',
+  'open-activity-monitor',
+  'open-system-settings'
+]);
 
 const createLoadingState = (): LoadingState => ({
   snapshot: true,
@@ -673,7 +711,7 @@ export const App = () => {
       return;
     }
 
-    if (actionId === 'flush-dns') {
+    if (IMMEDIATE_UTILITY_ACTIONS.has(actionId as UtilityActionId)) {
       await handleRunUtilityAction(actionId);
       return;
     }
@@ -1268,7 +1306,7 @@ export const App = () => {
           history={actionHistory}
           isLoading={loading.actionHistory}
           title="Recent operator log"
-          description="Recent repair actions are persisted so you can correlate changes with the current machine state."
+          description="Recent repair actions."
         />
       </section>
 
@@ -1292,7 +1330,7 @@ export const App = () => {
             setConfirmation({
               kind: 'kill-process',
               title: `End process: ${processInfo.name}`,
-              description: 'This sends an explicit termination signal to the selected process. Continue only if you understand the impact on the running application.',
+              description: 'This ends the selected process.',
               confirmLabel: 'End process',
               process: processInfo
             });
@@ -1306,7 +1344,7 @@ export const App = () => {
             setConfirmation({
               kind: 'kill-process',
               title: `End process: ${processInfo.name}`,
-              description: 'This sends an explicit termination signal to the selected process. Continue only if you understand the impact on the running application.',
+              description: 'This ends the selected process.',
               confirmLabel: 'End process',
               process: processInfo
             });
@@ -1321,9 +1359,7 @@ export const App = () => {
               <p className="section-kicker">Recent events</p>
               <h2>Watchdog timeline</h2>
             </div>
-            <p className="panel-meta">
-              Filters query the local event history so you can separate baseline activity from explainable alerts.
-            </p>
+            <p className="panel-meta">Filtered event history.</p>
           </div>
           <EventFilters
             severityFilter={severityFilter}
@@ -1341,8 +1377,8 @@ export const App = () => {
             isLoading={isEventsLoading}
             emptyMessage={
               hiddenSuppressedCount > 0
-                ? `No visible events match the current filters. ${hiddenSuppressedCount} event${hiddenSuppressedCount === 1 ? '' : 's'} ${hiddenSuppressedCount === 1 ? 'is' : 'are'} hidden by suppressions.`
-                : 'No events match the current filters.'
+                ? `No events match. ${hiddenSuppressedCount} hidden by suppressions.`
+                : 'No matching events.'
             }
             onSelectEvent={setSelectedEventId}
           />
@@ -1382,7 +1418,7 @@ export const App = () => {
           history={actionHistory}
           isLoading={loading.actionHistory}
           title="Action audit trail"
-          description="Recent operator changes stay visible here so you can compare repairs against the live system state."
+          description="Recent actions."
         />
       </section>
 
@@ -1400,7 +1436,7 @@ export const App = () => {
             setConfirmation({
               kind: 'temp-cleanup',
               title: 'Clean previewed temp items',
-              description: 'Sovereign will only remove the temp items shown in the current preview. Locked or permission-protected items will be reported instead of silently ignored.',
+              description: 'Only the previewed items will be removed.',
               confirmLabel: 'Run cleanup',
               preview: tempPreview
             });
@@ -1419,7 +1455,7 @@ export const App = () => {
             setConfirmation({
               kind: 'disable-startup-item',
               title: `Disable startup item: ${startupItem.name}`,
-              description: 'This removes the selected startup entry from the active startup path. Sovereign records backup metadata locally so the change can be traced later.',
+              description: 'This disables the selected startup item.',
               confirmLabel: 'Disable startup item',
               startupItem
             });
@@ -1428,7 +1464,7 @@ export const App = () => {
             setConfirmation({
               kind: 'restore-startup-item',
               title: `Restore startup item: ${backup.name}`,
-              description: 'This restores the saved startup backup that Sovereign recorded earlier. Continue only if you want this item to launch at startup again.',
+              description: 'This restores the selected startup item.',
               confirmLabel: 'Restore startup item',
               backup
             });
@@ -1448,8 +1484,8 @@ export const App = () => {
               title: `Start service: ${service.displayName}`,
               description:
                 snapshot?.platform === 'macos'
-                  ? 'This asks launchd to start or kickstart the selected LaunchAgent now. Permission failures or launchctl errors will be reported clearly.'
-                  : 'This asks the OS to start the selected service now. Permission failures or service-control errors will be reported clearly.',
+                  ? 'This starts the selected LaunchAgent.'
+                  : 'This starts the selected service.',
               confirmLabel: 'Start service',
               service
             });
@@ -1460,8 +1496,8 @@ export const App = () => {
               title: `Stop service: ${service.displayName}`,
               description:
                 snapshot?.platform === 'macos'
-                  ? 'This asks launchd to boot out the selected LaunchAgent. Continue only if you understand the impact on software that depends on it.'
-                  : 'This asks the OS to stop the selected service. Continue only if you understand the impact on software that depends on it.',
+                  ? 'This stops the selected LaunchAgent.'
+                  : 'This stops the selected service.',
               confirmLabel: 'Stop service',
               service
             });
@@ -1472,8 +1508,8 @@ export const App = () => {
               title: `Restart service: ${service.displayName}`,
               description:
                 snapshot?.platform === 'macos'
-                  ? 'This asks launchd to kickstart the selected LaunchAgent again. Permission failures or launchctl errors will be reported clearly.'
-                  : 'This asks the OS to restart the selected service. Permission failures or service-control errors will be reported clearly.',
+                  ? 'This restarts the selected LaunchAgent.'
+                  : 'This restarts the selected service.',
               confirmLabel: 'Restart service',
               service
             });
@@ -1494,7 +1530,7 @@ export const App = () => {
           <div className="brand-copy">
             <p className="section-kicker">Continental Systems</p>
             <h2>Sovereign</h2>
-            <p>Transparent desktop control center for system awareness and safe repair actions.</p>
+            <p>System awareness and repair.</p>
           </div>
         </div>
 
@@ -1516,16 +1552,16 @@ export const App = () => {
           <p className="section-kicker">Current posture</p>
           <span className={`status-pill status-${healthStatus}`}>{healthHeadline}</span>
           <p className="rail-copy">
-            {snapshot ? `${PLATFORM_LABELS[snapshot.platform]} · refreshed ${formatClock(snapshot.collectedAt)}` : 'Connecting to live telemetry and the local event store.'}
+            {snapshot ? `${PLATFORM_LABELS[snapshot.platform]} · ${formatClock(snapshot.collectedAt)}` : 'Connecting to telemetry.'}
           </p>
         </section>
 
         <section className="rail-card">
           <p className="section-kicker">Workspace guidance</p>
           <ul className="rail-list">
-            <li>Dashboard for overall posture and pressure.</li>
-            <li>Investigate for process and event triage.</li>
-            <li>Actions for actual repair and control tasks.</li>
+            <li>Dashboard for the broad picture.</li>
+            <li>Investigate for triage and detail.</li>
+            <li>Actions for deliberate system fixes.</li>
           </ul>
         </section>
       </aside>
@@ -1533,10 +1569,9 @@ export const App = () => {
       <div className="app-content">
         <header className="panel hero-panel">
           <div className="hero-copy">
-            <p className="section-kicker">Sovereign command center</p>
+            <p className="section-kicker">Sovereign workspace</p>
             <h1>{VIEW_COPY[activeView].title}</h1>
             <p className="hero-description">{VIEW_COPY[activeView].description}</p>
-            <p className="hero-helper">{VIEW_COPY[activeView].helper}</p>
           </div>
 
           <div className="hero-stats">
@@ -1553,14 +1588,14 @@ export const App = () => {
         {error ? (
           <section className="panel error-banner">
             <p className="section-kicker">Attention</p>
-            <h2>One or more data feeds need attention.</h2>
+            <h2>Data feed issue</h2>
             <p>{error}</p>
           </section>
         ) : null}
 
         <section className="panel control-panel">
           <div className="control-summary">
-            <p className="section-kicker">Current summary</p>
+            <p className="section-kicker">Current assessment</p>
             <h2>{healthHeadline}</h2>
             <p className="control-copy">{healthSummary}</p>
             <ul className="action-list">

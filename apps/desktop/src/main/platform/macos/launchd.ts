@@ -26,6 +26,7 @@ export interface LaunchdDefinition {
   runAtLoad: boolean;
   keepAlive: boolean;
   hasSchedule: boolean;
+  scheduleSummary: string | null;
   kind: LaunchdDirectoryDescriptor['kind'];
 }
 
@@ -119,6 +120,32 @@ const buildCommand = (rawPlist: RawLaunchdPlist): string => {
   }
 
   return '';
+};
+
+const buildScheduleSummary = (rawPlist: RawLaunchdPlist): string | null => {
+  const scheduleParts: string[] = [];
+
+  if (typeof rawPlist.StartInterval === 'number' && rawPlist.StartInterval > 0) {
+    scheduleParts.push(`interval:${rawPlist.StartInterval}s`);
+  }
+
+  if (rawPlist.StartCalendarInterval != null) {
+    scheduleParts.push(`calendar:${JSON.stringify(rawPlist.StartCalendarInterval)}`);
+  }
+
+  if (Array.isArray(rawPlist.WatchPaths) && rawPlist.WatchPaths.length > 0) {
+    scheduleParts.push(`watch:${rawPlist.WatchPaths.join(',')}`);
+  }
+
+  if (Array.isArray(rawPlist.QueueDirectories) && rawPlist.QueueDirectories.length > 0) {
+    scheduleParts.push(`queue:${rawPlist.QueueDirectories.join(',')}`);
+  }
+
+  if (rawPlist.StartOnMount === true) {
+    scheduleParts.push('mount');
+  }
+
+  return scheduleParts.length > 0 ? scheduleParts.join(' | ') : null;
 };
 
 const readDisabledMap = async (domainTarget: string): Promise<Map<string, boolean>> => {
@@ -247,6 +274,7 @@ export const listLaunchdDefinitions = async (
           (Array.isArray(rawPlist?.QueueDirectories) &&
             rawPlist.QueueDirectories.length > 0) ||
           rawPlist?.StartOnMount === true,
+        scheduleSummary: rawPlist ? buildScheduleSummary(rawPlist) : null,
         kind: descriptor.kind
       });
     }

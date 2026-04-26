@@ -28,9 +28,9 @@ export const WorkloadInsightsPanel = ({
             <p className="section-kicker">Workload graphs</p>
             <h2>Core and process breakdown</h2>
           </div>
-          <p className="panel-meta">Waiting for process and core telemetry.</p>
+          <p className="panel-meta">Waiting for telemetry.</p>
         </div>
-        <p className="state-block">No live workload graph is available yet.</p>
+        <p className="state-block">No live graph yet.</p>
       </section>
     );
   }
@@ -71,10 +71,7 @@ export const WorkloadInsightsPanel = ({
           <p className="section-kicker">Workload graphs</p>
           <h2>Core and process breakdown</h2>
         </div>
-        <p className="panel-meta">
-          Per-core bars and ranked process loads make it easier to see where pressure is coming
-          from.
-        </p>
+        <p className="panel-meta">Per-core and top-process load.</p>
       </div>
 
       <div className="core-grid">
@@ -104,7 +101,7 @@ export const WorkloadInsightsPanel = ({
         <div className="ranking-column">
           <div className="ranking-heading">
             <p className="detail-label">Top CPU processes</p>
-            <span>Current percentage of total CPU time</span>
+            <span>Current CPU share</span>
           </div>
           {topCpuProcesses.map((process) => (
             <div
@@ -129,7 +126,7 @@ export const WorkloadInsightsPanel = ({
         <div className="ranking-column">
           <div className="ranking-heading">
             <p className="detail-label">Top resident memory</p>
-            <span>Relative to the heaviest visible process</span>
+            <span>Relative memory use</span>
           </div>
           {topMemoryProcesses.map((process) => (
             <div

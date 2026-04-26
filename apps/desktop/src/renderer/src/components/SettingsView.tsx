@@ -20,13 +20,13 @@ interface SettingsViewProps {
 
 const PLATFORM_NOTES: Record<PlatformKey, string> = {
   windows:
-    'Windows-only providers stay inside user-space PowerShell and OS command surfaces. Sovereign does not install drivers, persistence, or hidden background agents.',
+    'Windows providers stay in user space. No drivers or persistence.',
   macos:
-    'The macOS profile stays inside standard user-space command surfaces such as launchctl, LaunchAgents, Gatekeeper, and Application Firewall reads. Unsupported Windows-only feeds stay visible as unsupported instead of pretending they are active.',
+    'macOS uses standard user-space sources. Unsupported Windows feeds stay marked unsupported.',
   linux:
-    'This build currently runs in a fallback profile on Linux. Windows and macOS startup, service, and security controls remain unavailable by design.',
+    'Linux uses a fallback profile. Windows and macOS controls stay unavailable.',
   unknown:
-    'Some monitors and controls depend on explicit Windows or macOS APIs. Sovereign surfaces those limits instead of inventing unsupported coverage.'
+    'Some monitors depend on Windows or macOS APIs.'
 };
 
 const bytesPerSecondToMegabytes = (value: number): string =>
@@ -54,9 +54,7 @@ export const SettingsView = ({
             <h2>Loading configuration</h2>
           </div>
         </div>
-        <div className="state-block">
-          Reading current thresholds, timeline limits, and watchdog coverage toggles.
-        </div>
+        <div className="state-block">Loading settings.</div>
       </section>
     );
   }
@@ -70,9 +68,7 @@ export const SettingsView = ({
             <h2>Configuration unavailable</h2>
           </div>
         </div>
-        <div className="state-block state-block-error">
-          Sovereign could not load the current local settings file.
-        </div>
+        <div className="state-block state-block-error">Could not load settings.</div>
       </section>
     );
   }
@@ -139,7 +135,7 @@ export const SettingsView = ({
           [
             'scheduledTaskMonitoring',
             'Scheduled tasks',
-            'Windows Task Scheduler remains unsupported on macOS. LaunchAgent persistence is surfaced through the startup monitor instead.'
+            'Read visible launchd jobs with scheduled triggers. Next-run and last-run timestamps are not currently exposed through this safe user-space path.'
           ],
           [
             'securityStatusMonitoring',
@@ -178,10 +174,7 @@ export const SettingsView = ({
             <p className="section-kicker">Thresholds</p>
             <h2>Severity guidance</h2>
           </div>
-          <p className="panel-meta">
-            These values only affect Sovereign&apos;s labels and summaries. They do not
-            change OS behavior or apply hidden enforcement.
-          </p>
+          <p className="panel-meta">Used for labels and summaries.</p>
         </div>
 
         <div className="settings-section-grid">
@@ -245,7 +238,7 @@ export const SettingsView = ({
                   )
                 }
               />
-              <small>MB/s combined throughput</small>
+              <small>MB/s total</small>
             </label>
             <label className="settings-field">
               <span>Stressed at</span>
@@ -264,7 +257,7 @@ export const SettingsView = ({
                   )
                 }
               />
-              <small>MB/s combined throughput</small>
+              <small>MB/s total</small>
             </label>
           </article>
         </div>
@@ -276,10 +269,7 @@ export const SettingsView = ({
             <p className="section-kicker">Watchdog coverage</p>
             <h2>Polling toggles</h2>
           </div>
-          <p className="panel-meta">
-            Turning a monitor off stops that in-app polling flow. Sovereign does not
-            keep background persistence when the app is closed.
-          </p>
+          <p className="panel-meta">Turn monitors on or off.</p>
         </div>
 
         <div className="toggle-list">
@@ -326,7 +316,7 @@ export const SettingsView = ({
                   })
                 }
               />
-              <small>Controls how many timeline items render at once.</small>
+              <small>Visible timeline items.</small>
             </label>
           </article>
 
@@ -346,7 +336,7 @@ export const SettingsView = ({
                   })
                 }
               />
-              <small>Applies to the live dashboard polling timer after saving.</small>
+              <small>Dashboard polling interval.</small>
             </label>
           </article>
 
@@ -366,7 +356,7 @@ export const SettingsView = ({
                 <option value="light">Light</option>
                 <option value="system">System</option>
               </select>
-              <small>Changes the renderer theme without changing OS settings.</small>
+              <small>App theme only.</small>
             </label>
           </article>
 
@@ -375,7 +365,7 @@ export const SettingsView = ({
               <div>
                 <p className="inventory-title">Telemetry summaries</p>
                 <p className="inventory-copy">
-                  Keep advice text visible on metric cards and health summaries.
+                  Show extra summary text.
                 </p>
               </div>
               <input
@@ -396,7 +386,7 @@ export const SettingsView = ({
               <div>
                 <p className="inventory-title">Show suppressed events</p>
                 <p className="inventory-copy">
-                  Keep events visible in the timeline even when they match a saved suppression rule.
+                  Keep suppressed events visible.
                 </p>
               </div>
               <input
@@ -437,9 +427,9 @@ export const SettingsView = ({
 
         <div className="settings-status-row">
           <p className="panel-meta-inline">
-            Default preset: CPU {DEFAULT_APP_SETTINGS.thresholds.cpu.elevated}% /{' '}
-            {DEFAULT_APP_SETTINGS.thresholds.cpu.stressed}% and timeline limit{' '}
-            {DEFAULT_APP_SETTINGS.timelineEventLimit}.
+            Defaults: CPU {DEFAULT_APP_SETTINGS.thresholds.cpu.elevated}% /{' '}
+            {DEFAULT_APP_SETTINGS.thresholds.cpu.stressed}% · timeline{' '}
+            {DEFAULT_APP_SETTINGS.timelineEventLimit}
           </p>
           {saveMessage ? <p className="status-copy success">{saveMessage}</p> : null}
           {saveError ? <p className="status-copy failure">{saveError}</p> : null}
@@ -452,9 +442,7 @@ export const SettingsView = ({
             <p className="section-kicker">Noise control</p>
             <h2>Watchdog suppressions</h2>
           </div>
-          <p className="panel-meta">
-            Suppressions hide future matches for known-safe paths or event fingerprints.
-          </p>
+          <p className="panel-meta">Hide known-safe events.</p>
         </div>
 
         {settings.watchdog.suppressions.length > 0 ? (
@@ -483,10 +471,7 @@ export const SettingsView = ({
             ))}
           </div>
         ) : (
-          <div className="state-block">
-            No suppressions saved. Use an event detail panel to suppress future alerts
-            for a known-safe path or fingerprint.
-          </div>
+          <div className="state-block">No suppressions saved.</div>
         )}
       </section>
 

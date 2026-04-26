@@ -20,12 +20,12 @@ export const EventTimeline = ({
   events,
   selectedEventId,
   isLoading,
-  emptyMessage = 'No events match the current filters.',
+  emptyMessage = 'No matching events.',
   onSelectEvent
 }: EventTimelineProps) => (
   <div className="timeline">
     {isLoading && events.length === 0 ? (
-      <div className="timeline-empty">Reading recent watchdog history.</div>
+      <div className="timeline-empty">Loading events.</div>
     ) : events.length === 0 ? (
       <div className="timeline-empty">{emptyMessage}</div>
     ) : (

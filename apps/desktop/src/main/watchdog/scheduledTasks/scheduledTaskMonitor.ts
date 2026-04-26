@@ -14,7 +14,11 @@ import type {
 } from '@main/watchdog/types';
 import { buildKey } from '@main/watchdog/helpers';
 
-import { WindowsScheduledTaskProvider } from './windowsScheduledTaskProvider';
+import {
+  createScheduledTaskProvider,
+  getScheduledTaskInventorySourceDescription,
+  getScheduledTaskPlatformLabel
+} from './scheduledTaskProvider';
 
 const POLL_INTERVAL_MS = 180_000;
 
@@ -24,8 +28,11 @@ const getIdentity = (task: ScheduledTaskRecord): string =>
 const getTaskSignature = (task: ScheduledTaskRecord): string =>
   buildKey(task.command, task.enabled, task.state, task.nextRunAt);
 
+const getScheduledTaskNoun = (): string =>
+  process.platform === 'darwin' ? 'scheduled launch job' : 'scheduled task';
+
 export class ScheduledTaskMonitor implements WatchdogMonitor {
-  private readonly provider = new WindowsScheduledTaskProvider();
+  private readonly provider = createScheduledTaskProvider();
   private readonly fileTrustProvider = new FileTrustProvider();
   private knownTasks = new Map<string, ScheduledTaskRecord>();
   private pollTimer: NodeJS.Timeout | undefined;
@@ -35,7 +42,7 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
   constructor(private readonly publish: EventPublisher) {}
 
   async initialize(): Promise<WatchdogMonitorInitializationResult> {
-    if (process.platform !== 'win32') {
+    if (!this.provider) {
       await this.publish(
         createWatchdogEvent({
           source: 'scheduled-tasks',
@@ -43,24 +50,25 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
           severity: 'info',
           kind: 'status',
           confidence: 'low',
-          title: 'Scheduled task inventory is Windows-only',
+          title: 'Scheduled task inventory is unavailable on this platform',
           description:
-            'Scheduled task summaries currently rely on Windows Task Scheduler commands and are unavailable on this platform.',
+            'Scheduled execution summaries currently rely on Windows or macOS platform sources and are unavailable on this platform.',
           rationale:
-            'The scheduled task provider uses Windows Task Scheduler surfaces.',
+            'The scheduled task provider currently supports Windows Task Scheduler and readable macOS launchd schedule metadata.',
           whyThisMatters:
             'Sovereign surfaces this platform limit directly instead of pretending scheduled task coverage exists everywhere.',
           evidence: [
-            'Current platform is not Windows.',
-            'Task action paths and run times are only collected when Windows exposes them.'
+            `Current platform is ${process.platform}.`,
+            'Scheduled execution metadata is only collected when the local OS exposes a readable command or plist surface.'
           ],
-          recommendedAction: 'Run Sovereign on Windows 11 to inventory and compare scheduled tasks.'
+          recommendedAction:
+            'Run Sovereign on Windows or macOS to inventory and compare scheduled execution entries.'
         })
       );
 
       return {
         baselineItemCount: 0,
-        note: 'Scheduled task monitoring is only available on Windows.'
+        note: 'Scheduled execution monitoring is currently available on Windows and macOS.'
       };
     }
 
@@ -83,8 +91,10 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
           'New or changed tasks are easier to judge when there is an explicit baseline of what was already there.',
         evidence: [
           `Observed tasks: ${tasks.length}`,
-          'Source: Get-ScheduledTask and Get-ScheduledTaskInfo',
-          'Some task details can still be limited by Windows permissions.'
+          `Source: ${getScheduledTaskInventorySourceDescription()}`,
+          process.platform === 'darwin'
+            ? 'macOS does not expose next-run and last-run timestamps for these launchd definitions through this safe user-space path.'
+            : 'Some task details can still be limited by Windows permissions.'
         ],
         recommendedAction:
           'Review newly added or changed tasks carefully if they point into user-writable paths.'
@@ -103,7 +113,10 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
 
       return {
         baselineItemCount: tasks.length,
-        note: 'Comparing readable scheduled task commands and states.'
+        note:
+          process.platform === 'darwin'
+            ? 'Comparing readable launchd schedules, commands, and runtime state.'
+            : 'Comparing readable scheduled task commands and states.'
       };
     } catch (error) {
       await this.publish(
@@ -115,7 +128,9 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
           confidence: 'low',
           title: 'Scheduled task inventory could not be read',
           description:
-            'Sovereign could not read scheduled task summaries from the current Windows source.',
+            process.platform === 'darwin'
+              ? 'Sovereign could not read scheduled launch job summaries from the current macOS source.'
+              : 'Sovereign could not read scheduled task summaries from the current Windows source.',
           rationale:
             'The scheduled task inventory command failed during baseline capture.',
           whyThisMatters:
@@ -124,7 +139,9 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
             error instanceof Error ? error.message : 'Unknown scheduled task inventory error.'
           ],
           recommendedAction:
-            'Some environments restrict scheduled task inspection. Compare with Task Scheduler if needed.'
+            process.platform === 'darwin'
+              ? 'Some environments restrict launchd inspection. Compare with `launchctl` if needed.'
+              : 'Some environments restrict scheduled task inspection. Compare with Task Scheduler if needed.'
         })
       );
 
@@ -136,7 +153,7 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
   }
 
   start(): void {
-    if (process.platform !== 'win32' || this.pollTimer) {
+    if (!this.provider || this.pollTimer) {
       return;
     }
 
@@ -155,7 +172,7 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
   }
 
   async refreshNow(): Promise<void> {
-    if (process.platform !== 'win32') {
+    if (!this.provider) {
       return;
     }
 
@@ -173,6 +190,10 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
   }
 
   private async poll(): Promise<void> {
+    if (!this.provider) {
+      return;
+    }
+
     try {
       const tasks = await this.provider.list();
       const nextTasks = new Map(tasks.map((task) => [getIdentity(task), task]));
@@ -206,7 +227,7 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
               rationale:
                 'The task was present in the baseline or a previous poll and is now absent from the current scheduled task inventory.',
               whyThisMatters:
-                'Scheduled task removals are often benign, but they can explain why a previously recurring task stopped running.',
+                `${getScheduledTaskPlatformLabel()} removals are often benign, but they can explain why a previously recurring item stopped running.`,
               evidence: [
                 `Task path: ${previousTask.path}`,
                 `Command: ${previousTask.command || 'Unavailable'}`
@@ -248,7 +269,9 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
           confidence: 'low',
           title: 'Scheduled task inventory refresh missed a polling cycle',
           description:
-            'Sovereign could not refresh scheduled task summaries for one interval.',
+            process.platform === 'darwin'
+              ? 'Sovereign could not refresh scheduled launch job summaries for one interval.'
+              : 'Sovereign could not refresh scheduled task summaries for one interval.',
           rationale:
             'The scheduled task provider failed during the current polling window.',
           whyThisMatters:
@@ -257,7 +280,9 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
             error instanceof Error ? error.message : 'Unknown scheduled task polling error.'
           ],
           recommendedAction:
-            'The monitor will retry automatically. Compare with Task Scheduler if you need immediate confirmation.'
+            process.platform === 'darwin'
+              ? 'The monitor will retry automatically. Compare with `launchctl` if you need immediate confirmation.'
+              : 'The monitor will retry automatically. Compare with Task Scheduler if you need immediate confirmation.'
         })
       );
     }
@@ -274,10 +299,10 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
       kind: 'change',
       confidence: pathAssessment.confidence,
       title: `Scheduled task added: ${task.path}${task.name}`,
-      description: 'A new scheduled task appeared in the Windows task inventory.',
+      description: `A new ${getScheduledTaskNoun()} appeared in the latest inventory.`,
       rationale: pathAssessment.rationale,
       whyThisMatters:
-        'New scheduled tasks can represent legitimate software maintenance, but they can also be used for persistence or recurring execution.',
+        `New ${getScheduledTaskPlatformLabel()} can represent legitimate software maintenance, but they can also be used for persistence or recurring execution.`,
       evidence: [
         `Task path: ${task.path}`,
         `Command: ${task.command || 'Unavailable'}`,
@@ -312,7 +337,7 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
       confidence,
       title: `Scheduled task changed: ${nextTask.path}${nextTask.name}`,
       description:
-        'An existing scheduled task changed command or state in the latest Windows inventory.',
+        `An existing ${getScheduledTaskNoun()} changed command or state in the latest inventory.`,
       rationale:
         pathAssessment.severity === 'info'
           ? 'The task configuration changed even though the new command path does not currently match a heuristic.'
@@ -357,10 +382,10 @@ export class ScheduledTaskMonitor implements WatchdogMonitor {
       confidence: pathAssessment.confidence,
       title: `${title}: ${task.path}${task.name}`,
       description:
-        'An observed scheduled task already points into a path that matches one or more explainable heuristics.',
+        `An observed ${getScheduledTaskNoun()} already points into a path that matches one or more explainable heuristics.`,
       rationale: pathAssessment.rationale,
       whyThisMatters:
-        'Scheduled tasks that point into user-writable paths are worth validating because they can re-run later without user attention.',
+        `${getScheduledTaskPlatformLabel()} that point into user-writable paths are worth validating because they can re-run later without user attention.`,
       evidence: [
         `Command: ${task.command || 'Unavailable'}`,
         `Task path: ${task.path}`,

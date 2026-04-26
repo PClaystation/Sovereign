@@ -127,11 +127,11 @@ export const TempCleanupPanel = ({
       </div>
     ) : isPreviewLoading ? (
       <div className="fixer-empty">
-        Building a safe preview from the current temp roots.
+        Building preview.
       </div>
     ) : (
       <div className="fixer-empty">
-        Generate a preview first. Sovereign only cleans temp items that you have explicitly reviewed.
+        Generate a preview first.
       </div>
     )}
   </section>

@@ -26,8 +26,10 @@ The current app includes:
 - process launch monitoring with explainable path heuristics for temp, Downloads, and AppData-style locations
 - startup item inventory and change detection on Windows and macOS
 - scheduled task summaries and change detection on Windows when readable
+- scheduled launch-job summaries and change detection on macOS when readable
 - Defender and firewall status reads on Windows when readable
 - Gatekeeper and Application Firewall status reads on macOS when readable
+- file-trust metadata on Windows and basic code-signing metadata on macOS when readable
 - a watchdog coverage panel that surfaces active, degraded, disabled, and unsupported monitor states
 - per-monitor baseline capture details so empty watchdog views are explained instead of backfilled with fake events
 - a filterable recent-events timeline and event detail panel with evidence and recommended action
@@ -171,10 +173,11 @@ The current build uses a SQLite-backed local store in the Electron main process.
 - Startup item disable is only implemented for inventory sources that Sovereign can trace explicitly. Permission failures are surfaced instead of bypassed.
 - Startup item restore only covers entries that Sovereign itself previously disabled and recorded in its local backup manifest.
 - Scheduled task summaries rely on `Get-ScheduledTask` and `Get-ScheduledTaskInfo`; some environments can limit or hide task details.
+- macOS scheduled-job summaries rely on readable `launchd` plist definitions with schedule-style triggers. This safe user-space path does not currently expose reliable next-run or last-run timestamps.
 - Defender and firewall reads rely on local PowerShell cmdlets on Windows. On macOS, Gatekeeper and Application Firewall reads rely on standard `spctl` and `socketfilterfw` command surfaces. If those sources are unavailable, Sovereign reports that limitation instead of pretending to know more.
 - macOS service controls currently target user LaunchAgents through `launchctl`; they do not try to manage privileged system daemons.
 - Severity is heuristic, not authoritative. Temp, Downloads, AppData, and macOS user application-data path matches are intentionally explainable signals, not proof of malicious behavior.
-- File-trust metadata relies on local Authenticode and version-info reads. Missing publisher or signature data should be treated as a transparency limit, not an automatic verdict.
+- File-trust metadata relies on local Authenticode and version-info reads on Windows, plus standard macOS code-signing and assessment commands when available. Missing publisher or signature data should be treated as a transparency limit, not an automatic verdict.
 - Temp cleanup only targets previewed top-level items in the current user temp root and skips newer files by design.
 - Process termination, service restart, and startup disable can still fail because of OS permissions, active file/service locks, or `launchctl` restrictions; those failures are returned directly to the UI.
 - Monitor runtime status reflects what Sovereign itself could initialize or refresh during the current app session. It is not an independent guarantee that every Windows or macOS source is healthy outside the app.

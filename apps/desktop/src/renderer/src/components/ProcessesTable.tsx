@@ -54,9 +54,7 @@ export const ProcessesTable = ({
         <p className="section-kicker">Top processes</p>
         <h2>Process triage</h2>
       </div>
-      <p className="panel-meta">
-        Filter first, then inspect a row before opening its path or terminating it.
-      </p>
+      <p className="panel-meta">Filter and inspect.</p>
     </div>
 
     <input
@@ -86,7 +84,7 @@ export const ProcessesTable = ({
                 colSpan={6}
                 className="empty-cell"
               >
-                Reading the live process inventory.
+                Loading processes.
               </td>
             </tr>
           ) : processes.length === 0 ? (
@@ -95,7 +93,7 @@ export const ProcessesTable = ({
                 colSpan={6}
                 className="empty-cell"
               >
-                No process data is available from the current telemetry probe.
+                No process data available.
               </td>
             </tr>
           ) : (

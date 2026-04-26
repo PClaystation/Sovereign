@@ -1,9 +1,16 @@
-import { runPowerShellText } from '@main/watchdog/windows/runPowerShell';
+import {
+  escapePowerShellString,
+  runPowerShellText
+} from '@main/watchdog/windows/runPowerShell';
 import type { RunUtilityActionRequest } from '@shared/ipc';
 
 export type WindowsUtilityAction = Extract<
   RunUtilityActionRequest['action'],
-  'flush-dns' | 'restart-explorer' | 'empty-recycle-bin'
+  | 'flush-dns'
+  | 'open-task-manager'
+  | 'open-windows-security'
+  | 'restart-explorer'
+  | 'empty-recycle-bin'
 >;
 
 export class WindowsUtilityActionsProvider {
@@ -20,10 +27,26 @@ export class WindowsUtilityActionsProvider {
       return;
     }
 
+    if (action === 'open-task-manager') {
+      await this.openTarget('taskmgr.exe');
+      return;
+    }
+
+    if (action === 'open-windows-security') {
+      await this.openTarget('windowsdefender:');
+      return;
+    }
+
     if (action !== 'empty-recycle-bin') {
       throw new Error(`Unsupported Windows utility action: ${action}`);
     }
 
     await runPowerShellText('Clear-RecycleBin -Force -ErrorAction Stop');
+  }
+
+  private async openTarget(target: string): Promise<void> {
+    await runPowerShellText(
+      `Start-Process ${escapePowerShellString(target)} -ErrorAction Stop`
+    );
   }
 }

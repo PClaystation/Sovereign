@@ -36,10 +36,7 @@ export const StartupItemsPanel = ({
           <p className="section-kicker">Repair tool</p>
           <h2>{isMacos ? 'Launch items' : 'Startup items'}</h2>
         </div>
-        <p className="panel-meta">
-          Disable with confirmation. Sovereign records what changed instead of making
-          hidden persistence edits.
-        </p>
+        <p className="panel-meta">Disable or restore items.</p>
       </div>
 
       <input
@@ -52,7 +49,7 @@ export const StartupItemsPanel = ({
 
       {isLoading && items.length === 0 && backups.length === 0 ? (
         <div className="fixer-empty">
-          {isMacos ? 'Reading the current LaunchAgent inventory.' : 'Reading the current startup inventory.'}
+          {isMacos ? 'Loading launch items.' : 'Loading startup items.'}
         </div>
       ) : items.length > 0 || backups.length > 0 ? (
         <div className="fixer-content">
@@ -122,7 +119,7 @@ export const StartupItemsPanel = ({
             ? 'No startup items match the current filter.'
             : platform === 'macos'
               ? 'No launch items match the current filter.'
-              : 'Startup item control is available when Sovereign runs on Windows or macOS.'}
+              : 'Startup item control is unavailable on this platform.'}
         </div>
       )}
     </section>

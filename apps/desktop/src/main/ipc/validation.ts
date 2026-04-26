@@ -44,8 +44,14 @@ const WATCHDOG_SOURCES: readonly WatchdogSourceId[] = [
 ];
 const UTILITY_ACTIONS: readonly RunUtilityActionRequest['action'][] = [
   'flush-dns',
+  'open-temp-folder',
+  'open-downloads-folder',
+  'open-task-manager',
+  'open-windows-security',
   'restart-explorer',
   'empty-recycle-bin',
+  'open-activity-monitor',
+  'open-system-settings',
   'restart-finder',
   'empty-trash'
 ];

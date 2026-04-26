@@ -14,8 +14,8 @@ export const ActionHistoryPanel = ({
   history,
   isLoading,
   title = 'Recent action history',
-  description = 'Persisted repair results so you can see what changed instead of relying on transient toasts.',
-  emptyMessage = 'No repair actions have been recorded yet.'
+  description = 'Recent repair results.',
+  emptyMessage = 'No actions yet.'
 }: ActionHistoryPanelProps) => (
   <section className="panel action-history-panel">
     <div className="panel-heading">
@@ -27,7 +27,7 @@ export const ActionHistoryPanel = ({
     </div>
 
     {isLoading && history.length === 0 ? (
-      <p className="state-block">Reading recent fixer results.</p>
+      <p className="state-block">Loading actions.</p>
     ) : history.length === 0 ? (
       <p className="state-block">{emptyMessage}</p>
     ) : (
