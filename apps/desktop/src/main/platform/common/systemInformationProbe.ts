@@ -25,6 +25,12 @@ interface ProbeProfile {
   volumeFilter: (volume: DiskVolume) => boolean;
 }
 
+interface RankedProcessCandidate {
+  process: si.Systeminformation.ProcessesProcessData;
+  cpuPercent: number;
+  memoryBytes: number;
+}
+
 const EMPTY_CPU_SPEED: si.Systeminformation.CpuCurrentSpeedData = {
   min: 0,
   max: 0,
@@ -49,6 +55,8 @@ const EMPTY_FS_STATS: si.Systeminformation.FsStatsData = {
 };
 
 const EMPTY_NETWORK_STATS: si.Systeminformation.NetworkStatsData[] = [];
+const MAX_TOP_PROCESSES = 10;
+const MAX_PATH_SIGNAL_CACHE_ENTRIES = 256;
 
 const clampPercentage = (value: number): number =>
   Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
@@ -68,12 +76,45 @@ const mapVolume = (volume: si.Systeminformation.FsSizeData): DiskVolume => ({
   usagePercent: clampPercentage(volume.use || 0)
 });
 
-const sortProcesses = (left: ProcessInfo, right: ProcessInfo): number => {
+const compareRankedProcesses = (
+  left: RankedProcessCandidate,
+  right: RankedProcessCandidate
+): number => {
   if (right.cpuPercent !== left.cpuPercent) {
     return right.cpuPercent - left.cpuPercent;
   }
 
   return right.memoryBytes - left.memoryBytes;
+};
+
+const insertRankedProcess = (
+  rankedProcesses: RankedProcessCandidate[],
+  candidate: RankedProcessCandidate,
+  limit: number
+): void => {
+  const worstCandidate = rankedProcesses[rankedProcesses.length - 1];
+
+  if (
+    rankedProcesses.length >= limit &&
+    worstCandidate &&
+    compareRankedProcesses(candidate, worstCandidate) >= 0
+  ) {
+    return;
+  }
+
+  let insertIndex = rankedProcesses.findIndex(
+    (rankedProcess) => compareRankedProcesses(candidate, rankedProcess) < 0
+  );
+
+  if (insertIndex === -1) {
+    insertIndex = rankedProcesses.length;
+  }
+
+  rankedProcesses.splice(insertIndex, 0, candidate);
+
+  if (rankedProcesses.length > limit) {
+    rankedProcesses.pop();
+  }
 };
 
 const safeCollect = async <T>(collector: () => Promise<T>, fallback: T): Promise<T> => {
@@ -102,31 +143,41 @@ const collectObject = async <T extends object>(
 
 export class SystemInformationProbe implements SystemProbe {
   private readonly identityPromise: Promise<Omit<SystemIdentity, 'totalMemoryBytes' | 'bootedAt'>>;
+  private readonly coreCount = Math.max(os.cpus().length, 1);
+  private readonly pathSignalCache = new Map<string, string[]>();
 
   constructor(private readonly profile: ProbeProfile) {
     this.identityPromise = this.loadIdentity();
   }
 
   async collectSnapshot(settings: AppSettings): Promise<SystemMetricsSnapshot> {
-    const [cpuLoad, memoryStats, diskStats, networkStats, networkInterfaces, processStats] =
-      await Promise.all([
-        si.currentLoad(),
-        si.mem(),
-        si.fsSize(),
-        collectArray(() => si.networkStats('*'), EMPTY_NETWORK_STATS),
-        collectArray(
-          () => si.networkInterfaces(),
-          [] as si.Systeminformation.NetworkInterfacesData[]
-        ),
-        si.processes()
-      ]);
-    const currentTime = si.time();
-    const [cpuSpeed, cpuTemperature, fsStats, userSessions] = await Promise.all([
+    const [
+      cpuLoad,
+      memoryStats,
+      diskStats,
+      networkStats,
+      networkInterfaces,
+      processStats,
+      cpuSpeed,
+      cpuTemperature,
+      fsStats,
+      userSessions
+    ] = await Promise.all([
+      si.currentLoad(),
+      si.mem(),
+      si.fsSize(),
+      collectArray(() => si.networkStats('*'), EMPTY_NETWORK_STATS),
+      collectArray(
+        () => si.networkInterfaces(),
+        [] as si.Systeminformation.NetworkInterfacesData[]
+      ),
+      si.processes(),
       collectObject(() => si.cpuCurrentSpeed(), EMPTY_CPU_SPEED),
       collectObject(() => si.cpuTemperature(), EMPTY_CPU_TEMPERATURE),
       collectObject(() => si.fsStats(), EMPTY_FS_STATS),
       collectArray(() => si.users(), [] as si.Systeminformation.UserData[])
     ]);
+    const currentTime = si.time();
 
     const cpuUsagePercent = clampPercentage(cpuLoad.currentLoad);
     const memoryUsedBytes = memoryStats.active || memoryStats.used || 0;
@@ -190,26 +241,7 @@ export class SystemInformationProbe implements SystemProbe {
     const diskStatus = getPercentStatus(diskUsagePercent, healthRules.disk);
     const networkStatus = getNetworkStatus(totalBytesPerSec, healthRules.network);
 
-    const topProcesses = processStats.list
-      .map((process): ProcessInfo => {
-        const pathAssessment = analyzeExecutablePath(process.path || null);
-
-        return {
-          pid: process.pid,
-          parentPid: typeof process.parentPid === 'number' ? process.parentPid : null,
-          name: process.name || process.command || 'Unknown process',
-          cpuPercent: clampPercentage(process.cpu || 0),
-          memoryBytes: process.memRss || 0,
-          memoryPercent: clampPercentage(process.mem || 0),
-          path: process.path || null,
-          commandLine: process.command || null,
-          startedAt: process.started || null,
-          user: process.user || null,
-          pathSignals: pathAssessment.labels
-        };
-      })
-      .sort(sortProcesses)
-      .slice(0, 10);
+    const topProcesses = this.selectTopProcesses(processStats.list);
 
     const collectedAt = new Date().toISOString();
     const staticIdentity = await this.identityPromise;
@@ -228,7 +260,7 @@ export class SystemInformationProbe implements SystemProbe {
       },
       cpu: {
         usagePercent: cpuUsagePercent,
-        coreCount: os.cpus().length,
+        coreCount: this.coreCount,
         loadAverage: os.loadavg(),
         userPercent: clampPercentage(cpuLoad.currentLoadUser),
         systemPercent: clampPercentage(cpuLoad.currentLoadSystem),
@@ -295,6 +327,62 @@ export class SystemInformationProbe implements SystemProbe {
       }),
       history: []
     };
+  }
+
+  private selectTopProcesses(
+    processes: si.Systeminformation.ProcessesProcessData[]
+  ): ProcessInfo[] {
+    const rankedProcesses: RankedProcessCandidate[] = [];
+
+    for (const process of processes) {
+      insertRankedProcess(
+        rankedProcesses,
+        {
+          process,
+          cpuPercent: clampPercentage(process.cpu || 0),
+          memoryBytes: process.memRss || 0
+        },
+        MAX_TOP_PROCESSES
+      );
+    }
+
+    return rankedProcesses.map(({ process, cpuPercent, memoryBytes }): ProcessInfo => ({
+      pid: process.pid,
+      parentPid: typeof process.parentPid === 'number' ? process.parentPid : null,
+      name: process.name || process.command || 'Unknown process',
+      cpuPercent,
+      memoryBytes,
+      memoryPercent: clampPercentage(process.mem || 0),
+      path: process.path || null,
+      commandLine: process.command || null,
+      startedAt: process.started || null,
+      user: process.user || null,
+      pathSignals: this.getPathSignals(process.path || null)
+    }));
+  }
+
+  private getPathSignals(path: string | null): string[] {
+    if (!path) {
+      return [];
+    }
+
+    const cachedSignals = this.pathSignalCache.get(path);
+    if (cachedSignals) {
+      return cachedSignals;
+    }
+
+    const nextSignals = analyzeExecutablePath(path).labels;
+
+    if (this.pathSignalCache.size >= MAX_PATH_SIGNAL_CACHE_ENTRIES) {
+      const oldestKey = this.pathSignalCache.keys().next().value;
+
+      if (oldestKey) {
+        this.pathSignalCache.delete(oldestKey);
+      }
+    }
+
+    this.pathSignalCache.set(path, nextSignals);
+    return nextSignals;
   }
 
   private async loadIdentity(): Promise<Omit<SystemIdentity, 'totalMemoryBytes' | 'bootedAt'>> {

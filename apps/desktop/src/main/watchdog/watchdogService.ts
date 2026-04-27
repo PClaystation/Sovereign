@@ -121,8 +121,17 @@ const createCorrelationSummaryEvents = (events: WatchdogEvent[]): WatchdogEvent[
         relatedEventCount: groupedItems.length,
         fingerprint: buildKey('correlation-summary', correlationKey, ...sources.sort())
       });
-    });
+  });
 };
+
+const hasStatusPatchChanges = (
+  currentStatus: WatchdogMonitorRuntime,
+  patch: Partial<WatchdogMonitorRuntime>
+): boolean =>
+  Object.entries(patch).some(
+    ([key, value]) =>
+      currentStatus[key as keyof WatchdogMonitorRuntime] !== value
+  );
 
 export class WatchdogService {
   private readonly listeners = new Set<WatchdogListener>();
@@ -131,6 +140,8 @@ export class WatchdogService {
   private readonly initializedMonitorIds = new Set<WatchdogMonitorId>();
   private readonly monitorStatusMap = new Map<WatchdogMonitorId, WatchdogMonitorRuntime>();
   private isRunning = false;
+  private statusBatchDepth = 0;
+  private hasPendingStatusUpdate = false;
 
   constructor(
     private readonly eventStore: EventStore,
@@ -167,57 +178,63 @@ export class WatchdogService {
   }
 
   async initialize(): Promise<void> {
-    await this.syncMonitors();
+    await this.runWithBatchedStatusUpdates(() => this.syncMonitors());
   }
 
   start(): void {
     this.isRunning = true;
-    void this.syncMonitors();
+    void this.runWithBatchedStatusUpdates(() => this.syncMonitors()).catch((error) => {
+      console.error('[watchdog] failed to start monitors', error);
+    });
   }
 
   async refreshNow(): Promise<void> {
-    await this.syncMonitors();
+    await this.runWithBatchedStatusUpdates(async () => {
+      await this.syncMonitors();
 
-    for (const registration of this.monitors) {
-      const isEnabled = this.currentSettings.monitors[registration.id];
-      const supported = this.isMonitorSupported(registration);
+      for (const registration of this.monitors) {
+        const isEnabled = this.currentSettings.monitors[registration.id];
+        const supported = this.isMonitorSupported(registration);
 
-      if (!isEnabled || !supported) {
-        continue;
+        if (!isEnabled || !supported) {
+          continue;
+        }
+
+        try {
+          await registration.monitor.refreshNow();
+          this.updateMonitorStatus(registration.id, {
+            enabled: true,
+            supported: true,
+            state: this.isRunning ? 'active' : 'idle',
+            lastCheckedAt: new Date().toISOString(),
+            lastError: null
+          });
+        } catch (error) {
+          this.reportMonitorError(registration, error);
+        }
       }
-
-      try {
-        await registration.monitor.refreshNow();
-        this.updateMonitorStatus(registration.id, {
-          enabled: true,
-          supported: true,
-          state: this.isRunning ? 'active' : 'idle',
-          lastCheckedAt: new Date().toISOString(),
-          lastError: null
-        });
-      } catch (error) {
-        this.reportMonitorError(registration, error);
-      }
-    }
+    });
   }
 
   stop(): void {
     this.isRunning = false;
 
-    for (const registration of this.monitors) {
-      registration.monitor.stop();
+    this.runWithBatchedStatusUpdatesSync(() => {
+      for (const registration of this.monitors) {
+        registration.monitor.stop();
 
-      this.updateMonitorStatus(registration.id, {
-        enabled: this.currentSettings.monitors[registration.id],
-        supported: this.isMonitorSupported(registration),
-        state: this.isMonitorSupported(registration) ? 'idle' : 'unsupported'
-      });
-    }
+        this.updateMonitorStatus(registration.id, {
+          enabled: this.currentSettings.monitors[registration.id],
+          supported: this.isMonitorSupported(registration),
+          state: this.isMonitorSupported(registration) ? 'idle' : 'unsupported'
+        });
+      }
+    });
   }
 
   async updateSettings(settings: AppSettings): Promise<void> {
     this.currentSettings = settings;
-    await this.syncMonitors();
+    await this.runWithBatchedStatusUpdates(() => this.syncMonitors());
   }
 
   getMonitorStatuses(): WatchdogMonitorRuntime[] {
@@ -356,7 +373,7 @@ export class WatchdogService {
   ): void {
     const currentStatus = this.monitorStatusMap.get(monitorId);
 
-    if (!currentStatus) {
+    if (!currentStatus || !hasStatusPatchChanges(currentStatus, patch)) {
       return;
     }
 
@@ -364,12 +381,49 @@ export class WatchdogService {
       ...currentStatus,
       ...patch
     });
+
+    if (this.statusBatchDepth > 0) {
+      this.hasPendingStatusUpdate = true;
+      return;
+    }
+
     this.emitStatusUpdate();
   }
 
   private emitStatusUpdate(): void {
     const statuses = this.getMonitorStatuses();
     this.statusListeners.forEach((listener) => listener(statuses));
+  }
+
+  private async runWithBatchedStatusUpdates<T>(operation: () => Promise<T>): Promise<T> {
+    this.statusBatchDepth += 1;
+
+    try {
+      return await operation();
+    } finally {
+      this.flushStatusBatch();
+    }
+  }
+
+  private runWithBatchedStatusUpdatesSync(operation: () => void): void {
+    this.statusBatchDepth += 1;
+
+    try {
+      operation();
+    } finally {
+      this.flushStatusBatch();
+    }
+  }
+
+  private flushStatusBatch(): void {
+    this.statusBatchDepth = Math.max(0, this.statusBatchDepth - 1);
+
+    if (this.statusBatchDepth > 0 || !this.hasPendingStatusUpdate) {
+      return;
+    }
+
+    this.hasPendingStatusUpdate = false;
+    this.emitStatusUpdate();
   }
 
   private reportMonitorError(

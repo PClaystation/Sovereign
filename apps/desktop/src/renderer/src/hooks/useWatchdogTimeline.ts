@@ -1,4 +1,11 @@
-import { startTransition, useEffect, useState } from 'react';
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState
+} from 'react';
 
 import type {
   AppSettings,
@@ -33,8 +40,13 @@ export const useWatchdogTimeline = ({
   const [sourceFilter, setSourceFilter] = useState<'all' | WatchdogSourceId>('all');
   const [eventSearch, setEventSearch] = useState('');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const deferredEventSearch = useDeferredValue(eventSearch.trim().toLowerCase());
+  const latestRequestId = useRef(0);
+  const pendingRefreshTimer = useRef<number | null>(null);
 
   const loadEvents = async (): Promise<void> => {
+    const requestId = latestRequestId.current + 1;
+    latestRequestId.current = requestId;
     setIsLoading(true);
 
     try {
@@ -43,8 +55,12 @@ export const useWatchdogTimeline = ({
         severities: severityFilter === 'all' ? undefined : [severityFilter],
         categories: categoryFilter === 'all' ? undefined : [categoryFilter],
         sources: sourceFilter === 'all' ? undefined : [sourceFilter],
-        searchText: eventSearch.trim() || undefined
+        searchText: deferredEventSearch || undefined
       });
+
+      if (requestId !== latestRequestId.current) {
+        return;
+      }
 
       startTransition(() => {
         onClearError();
@@ -56,34 +72,53 @@ export const useWatchdogTimeline = ({
         );
       });
     } catch (cause) {
-      onError(getErrorMessage(cause, 'Unable to refresh the watchdog timeline.'));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const refreshEvents = async (): Promise<void> => {
-      if (!isMounted) {
+      if (requestId !== latestRequestId.current) {
         return;
       }
 
-      await loadEvents();
-    };
+      onError(getErrorMessage(cause, 'Unable to refresh the watchdog timeline.'));
+    } finally {
+      if (requestId === latestRequestId.current) {
+        setIsLoading(false);
+      }
+    }
+  };
 
-    void refreshEvents();
+  const refreshEvents = useEffectEvent(() => {
+    void loadEvents();
+  });
 
+  useEffect(() => {
+    refreshEvents();
+  }, [
+    severityFilter,
+    categoryFilter,
+    sourceFilter,
+    deferredEventSearch,
+    settings?.timelineEventLimit
+  ]);
+
+  useEffect(() => {
     const unsubscribe = window.sovereign.onEventsUpdated(() => {
-      void refreshEvents();
+      if (pendingRefreshTimer.current) {
+        window.clearTimeout(pendingRefreshTimer.current);
+      }
+
+      pendingRefreshTimer.current = window.setTimeout(() => {
+        pendingRefreshTimer.current = null;
+        refreshEvents();
+      }, 200);
     });
 
     return () => {
-      isMounted = false;
+      if (pendingRefreshTimer.current) {
+        window.clearTimeout(pendingRefreshTimer.current);
+        pendingRefreshTimer.current = null;
+      }
+
       unsubscribe();
     };
-  }, [severityFilter, categoryFilter, sourceFilter, eventSearch, settings?.timelineEventLimit]);
+  }, []);
 
   const suppressions: WatchdogSuppressionRule[] = settings?.watchdog.suppressions || [];
   const visibleEvents = settings?.watchdog.showSuppressedEvents

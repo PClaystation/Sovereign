@@ -80,7 +80,7 @@ const createMainWindow = async (): Promise<void> => {
     backgroundColor: '#09111b',
     title: 'Sovereign',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    show: true,
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -95,6 +95,15 @@ const createMainWindow = async (): Promise<void> => {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.show();
+    mainWindow.focus();
   });
 
   mainWindow.webContents.on(
@@ -124,8 +133,6 @@ const createMainWindow = async (): Promise<void> => {
 
     event.preventDefault();
   });
-
-  mainWindow.focus();
 
   if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -198,28 +205,36 @@ const initializeServices = async (): Promise<void> => {
     broadcastDashboardUpdate(IPC_CHANNELS.fixer.historyUpdated, result);
   });
 
-  try {
-    await dashboardService.initialize();
-    dashboardService.start();
+  logStartup('initializeServices:complete');
+};
 
-    watchdogStartupTimer = setTimeout(() => {
-      watchdogStartupTimer = null;
+const startBackgroundServices = async (): Promise<void> => {
+  logStartup('startBackgroundServices:start');
 
-      void (async () => {
-        try {
-          await watchdogService?.initialize();
-          watchdogService?.start();
-        } catch (error) {
-          reportMainProcessFailure('watchdog:start-failure', error);
-        }
-      })();
-    }, WATCHDOG_STARTUP_DELAY_MS);
-  } catch (error) {
-    logStartup('initializeServices:background-failure', error);
-    throw error;
+  const currentDashboardService = dashboardService;
+  const currentWatchdogService = watchdogService;
+
+  if (!currentDashboardService || !currentWatchdogService) {
+    throw new Error('Sovereign services were not registered before startup.');
   }
 
-  logStartup('initializeServices:complete');
+  await currentDashboardService.initialize();
+  currentDashboardService.start();
+
+  watchdogStartupTimer = setTimeout(() => {
+    watchdogStartupTimer = null;
+
+    void (async () => {
+      try {
+        await currentWatchdogService.initialize();
+        currentWatchdogService.start();
+      } catch (error) {
+        reportMainProcessFailure('watchdog:start-failure', error);
+      }
+    })();
+  }, WATCHDOG_STARTUP_DELAY_MS);
+
+  logStartup('startBackgroundServices:complete');
 };
 
 const reportBootstrapFailure = (error: unknown): void => {
@@ -255,6 +270,9 @@ const bootstrap = async (): Promise<void> => {
   try {
     await initializeServices();
     await createMainWindow();
+    void startBackgroundServices().catch((error) => {
+      reportMainProcessFailure('background-services:start-failure', error);
+    });
   } catch (error) {
     reportBootstrapFailure(error);
   }
